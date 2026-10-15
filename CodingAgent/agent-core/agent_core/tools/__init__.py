@@ -10,6 +10,8 @@ from .read_file import ReadFileTool, ReadFileInput
 from .write_file import WriteFileTool, WriteFileInput
 from .apply_patch import ApplyPatchTool, ApplyPatchInput, EditSpec
 from .approval import ApprovalManager, ApprovalRequest
+from .glob import GlobTool, GlobInput
+from .grep import GrepTool, GrepInput
 
 __all__ = [
     "ToolContext",
@@ -33,4 +35,10 @@ __all__ = [
     "ApplyPatchTool",
     "ApplyPatchInput",
     "EditSpec",
+    "ApprovalManager",
+    "ApprovalRequest",
+    "GlobTool",
+    "GlobInput",
+    "GrepTool",
+    "GrepInput",
 ]

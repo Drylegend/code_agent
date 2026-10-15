@@ -286,8 +286,8 @@ def test_06_workspace_tools_do_not_expose_file_deletion():
     registry = create_default_registry(include_write_tools=True)
     tool_names = [tool.name for tool in registry.list_tools()]
 
-    # Production tools are strictly list_directory, read_file, write_file, apply_patch
-    assert set(tool_names) == {"list_directory", "read_file", "write_file", "apply_patch"}
+    # Production tools are strictly list_directory, read_file, write_file, apply_patch, glob, grep
+    assert set(tool_names) == {"list_directory", "read_file", "write_file", "apply_patch", "glob", "grep"}
     for dangerous in ("delete_file", "remove_file", "unlink", "rmdir", "delete"):
         assert dangerous not in tool_names
 

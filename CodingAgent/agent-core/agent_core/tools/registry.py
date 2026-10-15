@@ -75,10 +75,14 @@ def create_default_registry(
     """
     from .list_directory import ListDirectoryTool
     from .read_file import ReadFileTool
+    from .glob import GlobTool
+    from .grep import GrepTool
 
     registry = ToolRegistry()
     registry.register(ListDirectoryTool())
     registry.register(ReadFileTool())
+    registry.register(GlobTool())
+    registry.register(GrepTool())
 
     if include_write_tools:
         from .write_file import WriteFileTool

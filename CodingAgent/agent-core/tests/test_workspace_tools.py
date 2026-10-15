@@ -415,13 +415,13 @@ def test_31_file_contents_do_not_appear_in_audit_log(tmp_path: Path):
 
 
 def test_32_exact_two_production_tools_registered():
-    """Test 32: exactly list_directory and read_file are registered in the default registry."""
+    """Test 32: exactly list_directory, read_file, glob, and grep are registered in the default registry."""
     registry = create_default_registry()
     tools = registry.list_tools()
     tool_names = {t.name for t in tools}
 
-    assert len(tools) == 2
-    assert tool_names == {"list_directory", "read_file"}
+    assert len(tools) == 4
+    assert tool_names == {"list_directory", "read_file", "glob", "grep"}
 
-    # Verify both are read-only
+    # Verify all are read-only
     assert all(t.read_only for t in tools)

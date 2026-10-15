@@ -681,12 +681,14 @@ async def test_32_tool_gateway_rejects_arbitrary_mutating_tool(
 def test_33_tool_registry_with_write_tools():
     reg = create_default_registry(include_write_tools=True)
     tool_names = [t.name for t in reg.list_tools()]
-    assert set(tool_names) == {"list_directory", "read_file", "write_file", "apply_patch"}
+    assert set(tool_names) == {"list_directory", "read_file", "write_file", "apply_patch", "glob", "grep"}
     defs = reg.get_openai_tool_definitions()
-    assert len(defs) == 4
+    assert len(defs) == 6
     def_names = [d["function"]["name"] for d in defs]
     assert "write_file" in def_names
     assert "apply_patch" in def_names
+    assert "glob" in def_names
+    assert "grep" in def_names
 
 
 # ── Phase 7 Addendum H Specific Tests ─────────────────────────────────────────

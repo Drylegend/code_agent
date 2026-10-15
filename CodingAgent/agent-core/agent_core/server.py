@@ -229,6 +229,27 @@ def extract_tool_result_event_data(
         summary = f"Applied patch to {path}: {replacements} replacement{'s' if replacements != 1 else ''}"
         preview = output.get("preview")
 
+    elif tool_name == "glob":
+        matches = output.get("matches", [])
+        count = output.get("count", len(matches))
+        total = output.get("total_matches", count)
+        trunc_str = " (truncated)" if output.get("truncated") else ""
+        summary = f"Found {total} matching file{'s' if total != 1 else ''}{trunc_str}"
+        preview = "\n".join(matches[:100])
+        if len(preview) > 4096:
+            preview = preview[:4096] + "\n...(preview truncated at 4 KB)"
+
+    elif tool_name == "grep":
+        matches = output.get("matches", [])
+        total = output.get("total_matches", len(matches))
+        searched = output.get("files_searched", 0)
+        trunc_str = " (truncated)" if output.get("truncated") else ""
+        summary = f"Found {total} match{'es' if total != 1 else ''} across {searched} file{'s' if searched != 1 else ''}{trunc_str}"
+        lines = [f"{m.get('file', '')}:{m.get('line_number', '')}: {m.get('line', '')}" for m in matches[:50]]
+        preview = "\n".join(lines)
+        if len(preview) > 4096:
+            preview = preview[:4096] + "\n...(preview truncated at 4 KB)"
+
     else:
         summary = f"{tool_name} completed"
         raw_out = json.dumps(inv_result.output, default=str) if inv_result.output else ""
