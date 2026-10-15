@@ -625,6 +625,46 @@ async def run_chat_generation(
                 tool_names,
             )
 
+            # Per-request context token breakdown: system prompt, tool schemas, history, tool results
+            tools_json = json.dumps(tools) if tools else ""
+            hist_texts: List[str] = []
+            tool_result_texts: List[str] = []
+            for m in session.get_messages():
+                role = m.get("role")
+                c = m.get("content") or ""
+                if isinstance(c, (dict, list)):
+                    c = json.dumps(c)
+                if role == "tool":
+                    tool_result_texts.append(str(c))
+                elif role != "system":
+                    hist_texts.append(str(c))
+
+            model_name = model_config.model
+            try:
+                import litellm
+                sys_tokens = litellm.token_counter(model=model_name, text=SYSTEM_PROMPT)
+                tool_schema_tokens = litellm.token_counter(model=model_name, text=tools_json)
+                hist_tokens = litellm.token_counter(model=model_name, text="\n".join(hist_texts)) if hist_texts else 0
+                tool_res_tokens = litellm.token_counter(model=model_name, text="\n".join(tool_result_texts)) if tool_result_texts else 0
+            except Exception:
+                sys_tokens = len(SYSTEM_PROMPT) // 4
+                tool_schema_tokens = len(tools_json) // 4
+                hist_tokens = sum(len(t) for t in hist_texts) // 4
+                tool_res_tokens = sum(len(t) for t in tool_result_texts) // 4
+
+            total_prompt_est = sys_tokens + tool_schema_tokens + hist_tokens + tool_res_tokens
+            logger.info(
+                "Per-request context token breakdown for session_id=%s round=%d: "
+                "system_prompt=%d, tool_schemas=%d, history=%d, tool_results=%d | total=%d",
+                session_id,
+                round_count,
+                sys_tokens,
+                tool_schema_tokens,
+                hist_tokens,
+                tool_res_tokens,
+                total_prompt_est,
+            )
+
             # Native OpenAI-style tool-selection call using stream=False
             response = await acompletion_with_tools(
                 model_config=model_config,

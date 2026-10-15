@@ -52,6 +52,8 @@ litellm.drop_params = True
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", category=RuntimeWarning, message="coroutine.*never awaited")
 
+logger = logging.getLogger("agent_core.llm")
+
 
 class LLMServiceError(Exception):
     """Domain error representing an LLM or provider failure."""

@@ -18,6 +18,10 @@ DEFAULT_SKIPPED_DIRS = {
     "target",
     "__pycache__",
     ".venv",
+    "venv",
+    "dist",
+    "agent-store",
+    "logs",
 }
 
 
@@ -28,11 +32,15 @@ class ListDirectoryInput(BaseModel):
         default=".",
         description="Path of the directory to list (relative to workspace root)",
     )
+    recursive: bool = Field(
+        default=False,
+        description="Whether to enumerate subdirectories recursively. Defaults to False (non-recursive).",
+    )
     max_entries: int = Field(
         default=200,
         gt=0,
         le=1000,
-        description="Maximum entries to return (1-1000)",
+        description="Maximum entries to return (1-1000, default 200)",
     )
 
     @field_validator("path", mode="before")
@@ -49,7 +57,8 @@ class ListDirectoryTool(ToolSpec):
     name = "list_directory"
     description = (
         "List files and subdirectories in a directory within the workspace. "
-        "Returns item names, types ('file' or 'dir'), and file sizes in bytes."
+        "Non-recursive by default. Set recursive=True to enumerate subdirectories recursively. "
+        "Returns item names, types ('file' or 'dir'), and file sizes in bytes. Capped at 200 entries."
     )
     input_model = ListDirectoryInput
     read_only = True
@@ -87,32 +96,62 @@ class ListDirectoryTool(ToolSpec):
         skipped_reported: List[str] = []
 
         try:
-            # Enumerate directory without recursive descent
-            with os.scandir(resolved_dir) as it:
-                for entry in it:
-                    name = entry.name
+            if args.recursive:
+                for root, dirs, files in os.walk(resolved_dir, topdown=True, followlinks=False):
+                    # Prune default ignored directories in-place
+                    ignored = [d for d in dirs if d in DEFAULT_SKIPPED_DIRS]
+                    for d in ignored:
+                        skipped_reported.append(d)
+                        dirs.remove(d)
 
-                    # Omit and record default ignored directories
-                    if entry.is_dir(follow_symlinks=False) and name in DEFAULT_SKIPPED_DIRS:
-                        skipped_reported.append(name)
-                        continue
+                    rel_root = Path(root).relative_to(resolved_dir)
 
-                    # Basic metadata collection
-                    is_dir = entry.is_dir(follow_symlinks=True)
-                    item_type = "dir" if is_dir else "file"
-                    size: Optional[int] = None
+                    for d in dirs:
+                        rel_item = (rel_root / d).as_posix()
+                        entries.append({
+                            "name": rel_item,
+                            "type": "dir",
+                            "size": None,
+                        })
 
-                    if not is_dir:
+                    for f in files:
+                        rel_item = (rel_root / f).as_posix()
+                        full_p = Path(root) / f
                         try:
-                            size = entry.stat(follow_symlinks=True).st_size
+                            sz = full_p.stat(follow_symlinks=False).st_size
                         except OSError:
-                            size = None
+                            sz = None
+                        entries.append({
+                            "name": rel_item,
+                            "type": "file",
+                            "size": sz,
+                        })
+            else:
+                # Non-recursive: enumerate immediate children
+                with os.scandir(resolved_dir) as it:
+                    for entry in it:
+                        name = entry.name
 
-                    entries.append({
-                        "name": name,
-                        "type": item_type,
-                        "size": size,
-                    })
+                        # Omit and record default ignored directories
+                        if entry.is_dir(follow_symlinks=False) and name in DEFAULT_SKIPPED_DIRS:
+                            skipped_reported.append(name)
+                            continue
+
+                        is_dir = entry.is_dir(follow_symlinks=True)
+                        item_type = "dir" if is_dir else "file"
+                        size: Optional[int] = None
+
+                        if not is_dir:
+                            try:
+                                size = entry.stat(follow_symlinks=True).st_size
+                            except OSError:
+                                size = None
+
+                        entries.append({
+                            "name": name,
+                            "type": item_type,
+                            "size": size,
+                        })
 
         except OSError as exc:
             return ToolResult(
@@ -122,7 +161,7 @@ class ListDirectoryTool(ToolSpec):
 
         # Deterministic case-insensitive name sorting
         entries.sort(key=lambda e: e["name"].lower())
-        skipped_reported.sort(key=str.lower)
+        skipped_reported = sorted(list(set(skipped_reported)), key=str.lower)
 
         total_found = len(entries)
         truncated = total_found > args.max_entries
@@ -148,8 +187,11 @@ class ListDirectoryTool(ToolSpec):
             output={
                 "path": display_path,
                 "entries": entries,
+                "entry_count": len(entries),
+                "total_found": total_found,
                 "skipped": skipped_reported,
                 "truncated": truncated,
+                "recursive": args.recursive,
                 "message": message,
             },
         )
