@@ -7,8 +7,13 @@ import {
   type TokenUsage,
   type ApprovalRequestPayload,
 } from "../lib/agentSocket";
-import { ChangesPanel } from "./ChangesPanel";
 import "./ChatPanel.css";
+
+export interface ChatPanelProps {
+  onSocketReady?: (socket: AgentSocket) => void;
+  workspaceRoot?: string;
+  onWorkspaceRootChange?: (ws: string) => void;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -86,19 +91,32 @@ const DEV_DEFAULT_WORKSPACE_ROOT = "D:\\personal_coding_agent\\CodingAgent\\agen
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ChatPanel() {
+export default function ChatPanel({
+  onSocketReady,
+  workspaceRoot: propWorkspaceRoot,
+  onWorkspaceRootChange,
+}: ChatPanelProps = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
   const [selectedModel, setSelectedModel] = useState("local-fast");
-  const [workspaceRoot, setWorkspaceRoot] = useState(DEV_DEFAULT_WORKSPACE_ROOT);
+  const [workspaceRoot, setWorkspaceRootState] = useState(propWorkspaceRoot || DEV_DEFAULT_WORKSPACE_ROOT);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelsList, setModelsList] = useState<ModelMetadata[]>([]);
   const [ollamaAvailable, setOllamaAvailable] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<"chat" | "changes">("chat");
-  const [socketInstance, setSocketInstance] = useState<AgentSocket | null>(null);
   const [autonomyLevel, setAutonomyLevel] = useState<number>(2);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequestPayload | null>(null);
+
+  const setWorkspaceRoot = useCallback((ws: string) => {
+    setWorkspaceRootState(ws);
+    onWorkspaceRootChange?.(ws);
+  }, [onWorkspaceRootChange]);
+
+  useEffect(() => {
+    if (propWorkspaceRoot && propWorkspaceRoot !== workspaceRoot) {
+      setWorkspaceRootState(propWorkspaceRoot);
+    }
+  }, [propWorkspaceRoot, workspaceRoot]);
 
   // Single authoritative frontend session ID for this panel instance
   const sessionIdRef = useRef<string>(crypto.randomUUID());
@@ -132,7 +150,7 @@ export default function ChatPanel() {
   useEffect(() => {
     const socket = new AgentSocket();
     socketRef.current = socket;
-    setSocketInstance(socket);
+    onSocketReady?.(socket);
 
     // Listen to connection state changes
     const unsubState = socket.onStateChange((state) => {
@@ -382,7 +400,6 @@ export default function ChatPanel() {
       unsubAutonomy();
       socket.disconnect();
       socketRef.current = null;
-      setSocketInstance(null);
     };
   }, []);
 
@@ -521,20 +538,7 @@ export default function ChatPanel() {
       {/* ── Header ── */}
       <div className="chat-panel__header">
         <div className="chat-panel__header-tabs">
-          <button
-            type="button"
-            className={`chat-panel__tab-btn ${activeTab === "chat" ? "chat-panel__tab-btn--active" : ""}`}
-            onClick={() => setActiveTab("chat")}
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            className={`chat-panel__tab-btn ${activeTab === "changes" ? "chat-panel__tab-btn--active" : ""}`}
-            onClick={() => setActiveTab("changes")}
-          >
-            Changes
-          </button>
+          <span className="chat-panel__title">Chat</span>
         </div>
         <div className="chat-panel__header-right">
           <div className="chat-panel__autonomy-control">
@@ -562,15 +566,7 @@ export default function ChatPanel() {
         </div>
       </div>
 
-      {activeTab === "changes" ? (
-        <ChangesPanel
-          socket={socketInstance}
-          workspaceRoot={workspaceRoot}
-          onWorkspaceRootChange={setWorkspaceRoot}
-        />
-      ) : (
-        <>
-          {/* ── Messages List ── */}
+      {/* ── Messages List ── */}
       <div
         className="chat-panel__messages"
         ref={messagesContainerRef}
@@ -911,8 +907,6 @@ export default function ChatPanel() {
           </div>
         </div>
       </div>
-      </>
-      )}
 
       {/* ── Status Bar for Active Resolved Model ── */}
       <div className="chat-panel__status-bar">

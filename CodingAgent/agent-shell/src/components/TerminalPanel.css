@@ -26,6 +26,12 @@
   -webkit-user-select: none;
 }
 
+.terminal-panel__header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .terminal-panel__title {
   font-family: "Inter", "Segoe UI", sans-serif;
   font-size: 12px;
@@ -33,6 +39,26 @@
   color: #7aa2f7;
   letter-spacing: 0.5px;
   text-transform: uppercase;
+}
+
+.terminal-panel__shell-select {
+  background: #1f2335;
+  color: #c0caf5;
+  border: 1px solid #3b4261;
+  border-radius: 4px;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.terminal-panel__shell-select:hover,
+.terminal-panel__shell-select:focus {
+  border-color: #7aa2f7;
+  background: #24283b;
 }
 
 .terminal-panel__restart-btn {

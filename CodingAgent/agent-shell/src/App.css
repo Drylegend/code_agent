@@ -48,6 +48,14 @@ body,
   overflow: hidden;
 }
 
+.app__changes-container {
+  height: 100%;
+  display: flex;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+
 /* ── Resizer Affordance & Divider ─────────────────────────────────────────── */
 
 .app__resizer {

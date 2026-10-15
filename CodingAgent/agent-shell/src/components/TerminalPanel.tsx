@@ -70,6 +70,7 @@ export default function TerminalPanel({
   cwd = DEFAULT_CWD,
 }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [activeShell, setActiveShell] = useState<string>(shell);
   const [exited, setExited] = useState(false);
   const exitedRef = useRef(false);
 
@@ -137,7 +138,7 @@ export default function TerminalPanel({
       try {
         console.log("[terminal] before pty_spawn, cols=%d, rows=%d", cols, rows);
         const id = await invoke<number>("pty_spawn", {
-          shell,
+          shell: activeShell,
           cwd,
           cols,
           rows,
@@ -316,14 +317,28 @@ export default function TerminalPanel({
       term.dispose();
       console.log("[terminal] cleanup completed");
     };
-    // Re-run the effect when shell/cwd changes or when restarting after exit.
+    // Re-run the effect when activeShell/cwd changes or when restarting after exit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shell, cwd, exited]);
+  }, [activeShell, cwd, exited]);
 
   return (
     <div className="terminal-panel">
       <div className="terminal-panel__header">
-        <span className="terminal-panel__title">Terminal</span>
+        <div className="terminal-panel__header-left">
+          <span className="terminal-panel__title">Terminal</span>
+          <select
+            className="terminal-panel__shell-select"
+            value={activeShell}
+            onChange={(e) => {
+              setActiveShell(e.target.value);
+              setExited(false);
+            }}
+            title="Switch active shell session (PowerShell or cmd)"
+          >
+            <option value="powershell">PowerShell</option>
+            <option value="cmd">Command Prompt (cmd)</option>
+          </select>
+        </div>
         {exited && (
           <button
             className="terminal-panel__restart-btn"
