@@ -141,8 +141,11 @@ def format_tool_result_for_model(result: GatewayInvocationResult) -> str:
         else:
             body = str(result.output)
     else:
+        err_msg = result.error or "Tool execution failed"
+        if "Internal error" in err_msg or "Internal tool" in err_msg:
+            err_msg = "An internal error occurred while executing this tool. Please try another approach or re-try."
         err_dict: Dict[str, Any] = {
-            "error": result.error or "Tool execution failed",
+            "error": err_msg,
             "authorized": result.authorized,
         }
         if result.denial_reason:
@@ -868,10 +871,22 @@ async def run_chat_generation(
                         )
                     except Exception as exc:
                         logger.exception("Unexpected exception invoking tool '%s': %s", fn_name, exc)
+                        if tool_gateway and hasattr(tool_gateway, "audit_logger") and tool_gateway.audit_logger:
+                            try:
+                                tool_gateway.audit_logger.log(
+                                    session_id=session_id,
+                                    tool=fn_name,
+                                    args=parsed_args if isinstance(parsed_args, dict) else {},
+                                    outcome="error",
+                                    duration=0.0,
+                                    extra={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+                                )
+                            except Exception:
+                                pass
                         inv_result = GatewayInvocationResult(
                             success=False,
                             tool_name=fn_name,
-                            error=f"Internal tool execution error: {type(exc).__name__}",
+                            error=f"Internal error while executing '{fn_name}'. The error has been logged.",
                             authorized=True,
                         )
 
@@ -881,7 +896,11 @@ async def run_chat_generation(
                 if not inv_result.authorized:
                     round_failure_error = inv_result.denial_reason or "Access denied by security policy"
                 elif not inv_result.success:
-                    round_failure_error = inv_result.error or "Tool execution failed"
+                    err_text = inv_result.error or "Tool execution failed"
+                    if "Internal error" in err_text or "Internal tool" in err_text:
+                        round_failure_error = "An internal error occurred while executing the tool."
+                    else:
+                        round_failure_error = err_text
 
                 # 3. Emit tool.result event immediately after ToolGateway.invoke
                 ok, summary, preview, truncated, possible_injection, warning = extract_tool_result_event_data(inv_result)

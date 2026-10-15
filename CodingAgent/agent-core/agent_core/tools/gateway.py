@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from pathlib import Path
 import time
+import traceback
 from typing import Any, Callable, Dict, Optional, Union
 
 from pydantic import BaseModel, Field, ValidationError
@@ -13,6 +16,8 @@ from .audit import AuditLogger
 from .base import ToolContext, ToolResult, ToolSpec
 from .path_guard import PathGuard, PathGuardError
 from .registry import ToolRegistry
+
+logger = logging.getLogger("agent_core.gateway")
 
 
 class AuthorizationResult(BaseModel):
@@ -222,58 +227,60 @@ class ToolGateway:
                 error=auth_result.reason or "Authorization denied",
             )
 
-        # 4b. Approval Gate Check for Write Tools
-        effective_autonomy = (
-            autonomy_level
-            if autonomy_level is not None
-            else (self.get_session_autonomy(session_id) if self.get_session_autonomy else 2)
-        )
-        if not tool.read_only and tool_name in AUTHORIZED_WRITE_TOOLS:
-            # Level 2 "Ask" requires approval for write tools
-            if effective_autonomy == 2 and self.approval_manager is not None:
-                args_data = validated_args.model_dump()
-                target_path = str(args_data.get("path", ""))
-                diff_preview: Optional[str] = None
-                byte_size: Optional[int] = None
-                if tool_name == "write_file":
-                    content = args_data.get("content", "")
-                    byte_size = len(str(content).encode("utf-8"))
-                elif tool_name == "apply_patch":
-                    diff_preview = args_data.get("patch") or json.dumps(args_data.get("edits", []))
-
-                approved = await self.approval_manager.request_approval(
-                    session_id=session_id,
-                    tool_name=tool_name,
-                    validated_args=args_data,
-                    path=target_path,
-                    diff_preview=diff_preview,
-                    byte_size=byte_size,
-                )
-                if not approved:
-                    self.audit_logger.log(
-                        session_id=session_id,
-                        tool=tool_name,
-                        args=args_data,
-                        outcome="denied",
-                        duration=0.0,
-                    )
-                    return GatewayInvocationResult(
-                        success=False,
-                        tool_name=tool_name,
-                        authorized=False,
-                        denial_reason="Tool execution rejected by user",
-                        error="Tool execution rejected by user",
-                    )
-
-        # 5. Execute authorized tool
-        context = ToolContext(
-            session_id=session_id,
-            workspace_root=effective_root,
-            audit_logger=self.audit_logger,
-        )
         start_time = time.perf_counter()
+        raw_args_dict = validated_args.model_dump() if validated_args is not None else (raw_args if isinstance(raw_args, dict) else {})
 
         try:
+            # 4b. Approval Gate Check for Write Tools
+            effective_autonomy = (
+                autonomy_level
+                if autonomy_level is not None
+                else (self.get_session_autonomy(session_id) if self.get_session_autonomy else 2)
+            )
+            if not tool.read_only and tool_name in AUTHORIZED_WRITE_TOOLS:
+                # Level 2 "Ask" requires approval for write tools
+                if effective_autonomy == 2 and self.approval_manager is not None:
+                    args_data = validated_args.model_dump()
+                    target_path = str(args_data.get("path", ""))
+                    diff_preview: Optional[str] = None
+                    byte_size: Optional[int] = None
+                    if tool_name == "write_file":
+                        content = args_data.get("content", "")
+                        byte_size = len(str(content).encode("utf-8"))
+                    elif tool_name == "apply_patch":
+                        diff_preview = args_data.get("patch") or json.dumps(args_data.get("edits", []))
+
+                    approved = await self.approval_manager.request_approval(
+                        session_id=session_id,
+                        tool_name=tool_name,
+                        validated_args=args_data,
+                        path=target_path,
+                        diff_preview=diff_preview,
+                        byte_size=byte_size,
+                    )
+                    if not approved:
+                        self.audit_logger.log(
+                            session_id=session_id,
+                            tool=tool_name,
+                            args=args_data,
+                            outcome="denied",
+                            duration=0.0,
+                        )
+                        return GatewayInvocationResult(
+                            success=False,
+                            tool_name=tool_name,
+                            authorized=False,
+                            denial_reason="Tool execution rejected by user",
+                            error="Tool execution rejected by user",
+                        )
+
+            # 5. Execute authorized tool
+            context = ToolContext(
+                session_id=session_id,
+                workspace_root=effective_root,
+                audit_logger=self.audit_logger,
+            )
+
             # Shield tool execution so destructive writes, replace, verify,
             # and commit sequences cannot be cut off midway by external cancellation (e.g. Stop button).
             exec_task = asyncio.create_task(tool.execute(validated_args, context))
@@ -322,19 +329,25 @@ class ToolGateway:
 
         except Exception as exc:
             duration = time.perf_counter() - start_time
-            clean_err = str(exc).splitlines()[0] if str(exc) else "Internal tool error"
+            tb_str = traceback.format_exc()
+            logger.error(
+                "Internal tool execution error in '%s' for session '%s': %s\n%s",
+                tool_name, session_id, exc, tb_str,
+            )
 
             self.audit_logger.log(
                 session_id=session_id,
                 tool=tool_name,
-                args=validated_args.model_dump(),
+                args=raw_args_dict,
                 outcome="error",
                 duration=duration,
+                extra={"exception_type": type(exc).__name__, "exception_message": str(exc)},
             )
 
+            # User sees a clear error in the UI; model gets a short generic one without internals
             return GatewayInvocationResult(
                 success=False,
                 tool_name=tool_name,
                 authorized=True,
-                error=f"Tool execution failed: {clean_err}",
+                error=f"Internal error while executing '{tool_name}'. The error has been logged.",
             )

@@ -11,9 +11,10 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 
-# Application logs
+# Application logs & store
 logs/
 *.log
+store/
 
 # Build / packaging
 build/

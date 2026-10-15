@@ -1,2 +1,0 @@
-{"seq": 1, "path": "test.txt", "existed": true, "before_sha256": "a9460163e97427adc4e279ade2678180387b7230c729c14b0aa3f33d322d9ecb", "after_sha256": "dc594ceba04da2f3bbcb53ea40798a582dc8992c941ea1f28a03d04e18e07be0", "timestamp": "2026-10-03T08:40:01.292611+00:00", "tool": "apply_patch", "snapshot_file": "1_a9460163.bin"}
-{"seq": 2, "path": "text.txt", "existed": false, "before_sha256": null, "after_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", "timestamp": "2026-10-03T08:42:00.646658+00:00", "tool": "write_file", "snapshot_file": null}
