@@ -59,7 +59,11 @@ class ToolRegistry:
         self._tools.clear()
 
 
-def create_default_registry(include_write_tools: bool = False) -> ToolRegistry:
+def create_default_registry(
+    include_write_tools: bool = False,
+    snapshot_manager: Optional[Any] = None,
+    audit_logger: Optional[Any] = None,
+) -> ToolRegistry:
     """Create and populate the default production tool registry.
 
     Registers:
@@ -80,7 +84,7 @@ def create_default_registry(include_write_tools: bool = False) -> ToolRegistry:
         from .write_file import WriteFileTool
         from .apply_patch import ApplyPatchTool
 
-        registry.register(WriteFileTool())
-        registry.register(ApplyPatchTool())
+        registry.register(WriteFileTool(snapshot_manager=snapshot_manager, audit_logger=audit_logger))
+        registry.register(ApplyPatchTool(snapshot_manager=snapshot_manager, audit_logger=audit_logger))
 
     return registry

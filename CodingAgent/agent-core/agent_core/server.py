@@ -271,14 +271,46 @@ def is_plain_failure_acknowledgment(text: str) -> bool:
     return any(sig in lowered for sig in signals)
 
 
+def detect_unexecuted_tool_announcement(content: str, registry: Any) -> Optional[str]:
+    """Detect if the model's text announces an intention or attempt to execute a tool without actual tool calls.
+
+    Returns the name of the announced tool, or None.
+    """
+    if not content or not content.strip() or registry is None:
+        return None
+
+    lowered = content.lower()
+    tool_names = (
+        [t.name for t in registry.list_all()]
+        if hasattr(registry, "list_all")
+        else ["read_file", "write_file", "list_directory", "apply_patch", "grep", "glob"]
+    )
+
+    for name in tool_names:
+        name_lower = name.lower()
+        if name_lower not in lowered:
+            continue
+        patterns = [
+            rf"(?:i will|i'll|let me|i am going to|going to|calling|use the|invoke|executing)\s+(?:tool\s+)?['`\"]?{re.escape(name_lower)}['`\"]?",
+            rf"tool\s*call\s*:\s*['`\"]?{re.escape(name_lower)}['`\"]?",
+            rf"\b{re.escape(name_lower)}\s*\([^\)]*\)",
+            rf"<tool_call>\s*['`\"]?{re.escape(name_lower)}",
+        ]
+        for pat in patterns:
+            if re.search(pat, lowered):
+                return name
+
+    return None
+
+
 def parse_text_mode_tool_calls(content: str, registry: Any) -> List[Dict[str, Any]]:
     """Parse text-mode tool calls from assistant message content.
 
     Strict rules:
     - Matches raw single JSON object, list of JSON objects, markdown fences (```json...``` or ```tool_call...```),
-      or <tool_call>...</tool_call> tags.
+      or <tool_call>...</tool_call> tags anywhere in text.
     - Validates against registry: tool name must be a known, registered tool.
-    - Rejects arbitrary JSON found inside conversational prose.
+    - Rejects arbitrary JSON that does not match a registered tool.
     """
     if not content or not content.strip():
         return []
@@ -289,17 +321,34 @@ def parse_text_mode_tool_calls(content: str, registry: Any) -> List[Dict[str, An
     # 1. XML-style <tool_call>...</tool_call> tags
     tool_call_tags = re.findall(r"<tool_call>\s*([\s\S]*?)\s*</tool_call>", stripped)
     if tool_call_tags:
-        candidate_texts = tool_call_tags
-    else:
-        # 2. Markdown fence: ```json ... ``` or ```tool_call ... ```
-        fence_match = re.match(r"^```(?:json|tool_call)?\s*([\s\S]*?)\s*```$", stripped)
-        if fence_match:
-            candidate_texts = [fence_match.group(1).strip()]
-        elif (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
-            # 3. Direct JSON object or array with no external prose
-            candidate_texts = [stripped]
+        candidate_texts.extend(t.strip() for t in tool_call_tags if t.strip())
+
+    # 2. Markdown fences: ```json ... ``` or ```tool_call ... ``` anywhere in text
+    fences = re.findall(r"```(?:json|tool_call)?\s*([\s\S]*?)\s*```", stripped)
+    if fences:
+        candidate_texts.extend(f.strip() for f in fences if f.strip())
+
+    # 3. Direct or embedded JSON objects/arrays if no tags/fences found
+    if not candidate_texts:
+        if (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
+            candidate_texts.append(stripped)
         else:
-            return []
+            # Look for JSON objects {...} in the text that start with tool names or "name"
+            decoder = json.JSONDecoder()
+            idx = 0
+            while idx < len(stripped):
+                brace_pos = stripped.find("{", idx)
+                if brace_pos == -1:
+                    break
+                try:
+                    obj, end_pos = decoder.raw_decode(stripped, brace_pos)
+                    if isinstance(obj, dict) and any(k in obj for k in ("name", "tool", "tool_name", "function")):
+                        candidate_texts.append(stripped[brace_pos:end_pos])
+                        idx = end_pos
+                    else:
+                        idx = brace_pos + 1
+                except Exception:
+                    idx = brace_pos + 1
 
     parsed_tool_calls: List[Dict[str, Any]] = []
 
@@ -307,15 +356,12 @@ def parse_text_mode_tool_calls(content: str, registry: Any) -> List[Dict[str, An
         try:
             parsed = json.loads(text_block)
         except Exception:
-            return []
+            continue
 
         items = parsed if isinstance(parsed, list) else [parsed]
-        if not items:
-            return []
-
         for item in items:
             if not isinstance(item, dict):
-                return []
+                continue
 
             # Extract tool name
             fn_name = item.get("name") or item.get("tool") or item.get("tool_name")
@@ -327,11 +373,11 @@ def parse_text_mode_tool_calls(content: str, registry: Any) -> List[Dict[str, An
                     raw_args = item["function"].get("arguments")
 
             if not fn_name or not isinstance(fn_name, str):
-                return []
+                continue
 
             # Tool name must be registered in ToolRegistry
             if registry is None or not registry.get(fn_name):
-                return []
+                continue
 
             # Fallback for arguments if arguments wasn't explicitly nested
             if raw_args is None:
@@ -526,6 +572,7 @@ async def run_chat_generation(
     round_count = 0
     last_failed_tool_error: Optional[str] = None
     nudged_for_last_failure: bool = False
+    nudged_for_unexecuted_announcement: bool = False
 
     if tool_gateway is None:
         workspace_root = session.workspace_root
@@ -645,6 +692,31 @@ async def run_chat_generation(
                     nudge_prompt = (
                         f"The last tool call failed: {last_failed_tool_error}. "
                         "Make a corrected tool call now, or say plainly that you cannot complete the task."
+                    )
+                    session.add_user_message(nudge_prompt)
+                    round_count += 1
+                    continue
+
+                # Phase 8 Part A: Nudge if model announced a tool call but emitted no tool execution
+                announced_tool = detect_unexecuted_tool_announcement(
+                    final_content, tool_gateway.registry if tool_gateway else None
+                )
+                if (
+                    announced_tool is not None
+                    and not nudged_for_unexecuted_announcement
+                    and round_count < max_tool_rounds
+                    and not is_plain_failure_acknowledgment(final_content)
+                ):
+                    nudged_for_unexecuted_announcement = True
+                    logger.info(
+                        "Sending unexecuted tool call announcement nudge for session_id=%s: %s",
+                        session_id,
+                        announced_tool,
+                    )
+                    session.add_assistant_message(final_content)
+                    nudge_prompt = (
+                        f"You announced an intention to call the '{announced_tool}' tool but did not execute a tool call. "
+                        "Execute the tool call now using the required tool call format, or state plainly that you cannot complete the task."
                     )
                     session.add_user_message(nudge_prompt)
                     round_count += 1
@@ -825,9 +897,11 @@ async def run_chat_generation(
             if round_failure_error is not None:
                 last_failed_tool_error = round_failure_error
                 nudged_for_last_failure = False
+                nudged_for_unexecuted_announcement = False
             else:
                 last_failed_tool_error = None
                 nudged_for_last_failure = False
+                nudged_for_unexecuted_announcement = False
 
             round_count += 1
 
