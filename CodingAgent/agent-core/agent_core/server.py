@@ -616,6 +616,15 @@ async def run_chat_generation(
 
             history = prepare_llm_messages(session.get_messages(), SYSTEM_PROMPT)
 
+            tool_names = [t.get("function", {}).get("name") for t in (tools or [])]
+            logger.info(
+                "Sending LLM request for session_id=%s round=%d: tool_count=%d, tools=%s",
+                session_id,
+                round_count,
+                len(tool_names),
+                tool_names,
+            )
+
             # Native OpenAI-style tool-selection call using stream=False
             response = await acompletion_with_tools(
                 model_config=model_config,

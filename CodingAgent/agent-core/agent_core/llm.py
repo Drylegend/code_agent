@@ -110,6 +110,15 @@ async def acompletion_with_tools(
     if tools and model_name.startswith("ollama/"):
         model_name = "ollama_chat/" + model_name[len("ollama/"):]
 
+    tool_names = [t.get("function", {}).get("name") for t in (tools or [])]
+    logger.info(
+        "LLM request: model=%s, tool_mode=%s, tool_count=%d, tools=%s",
+        model_name,
+        model_config.tool_mode,
+        len(tool_names),
+        tool_names,
+    )
+
     kwargs: Dict[str, Any] = {
         "model": model_name,
         "api_base": model_config.api_base,
