@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+**/node_modules/
+target/
+**/target/
+
+# Python
+.venv/
+**/venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+**/.pytest_cache/
+
+# Build artifacts
+dist/
+**/dist/
+
+# Storage and logs (outside workspace)
+agent-store/
+logs/
+**/logs/
+*.log
+
+# Secrets and environment
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# IDE and OS
+.DS_Store
+Thumbs.db
