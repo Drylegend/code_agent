@@ -40,9 +40,19 @@ class Session:
     def __init__(self, session_id: str, workspace_root: Optional[Path] = None) -> None:
         self.session_id: str = session_id
         self.workspace_root: Optional[Path] = workspace_root
+        self.autonomy_level: int = 2  # Level 2 "Ask" (default), Level 3 "Scoped"
         self.messages: List[Dict[str, Any]] = []
         self.active_task: Optional[asyncio.Task] = None
         self._lock: asyncio.Lock = asyncio.Lock()
+
+    def set_autonomy_level(self, level: int) -> None:
+        """Update session autonomy level (2 for Ask, 3 for Scoped)."""
+        if level not in (2, 3):
+            raise ValueError(f"Invalid autonomy level: {level}. Allowed levels are 2 (Ask) and 3 (Scoped).")
+        self.autonomy_level = level
+
+    def get_autonomy_level(self) -> int:
+        return self.autonomy_level
 
     def set_workspace_root(self, root: Path) -> None:
         """Bind an explicit validated workspace root to this session."""

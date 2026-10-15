@@ -152,6 +152,29 @@ class ClientChangesUndoMessage(BaseModel):
     payload: ChangesUndoPayload
 
 
+class ApprovalResponsePayload(BaseModel):
+    request_id: str
+    decision: str  # 'approve' or 'reject'
+    session_id: Optional[str] = None
+
+
+class ClientApprovalResponseMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    type: Literal["approval.response"] = "approval.response"
+    payload: ApprovalResponsePayload
+
+
+class SessionSetAutonomyPayload(BaseModel):
+    session_id: str
+    autonomy_level: int = Field(..., ge=2, le=3)
+
+
+class ClientSessionSetAutonomyMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    type: Literal["session.set_autonomy"] = "session.set_autonomy"
+    payload: SessionSetAutonomyPayload
+
+
 ClientMessage = Annotated[
     Union[
         ClientPingMessage,
@@ -161,6 +184,8 @@ ClientMessage = Annotated[
         ClientEditUndoMessage,
         ClientChangesListMessage,
         ClientChangesUndoMessage,
+        ClientApprovalResponseMessage,
+        ClientSessionSetAutonomyMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -331,6 +356,33 @@ class ServerChangesUndoResultMessage(BaseModel):
     payload: ChangesUndoResultPayload
 
 
+class ApprovalRequestPayload(BaseModel):
+    request_id: str
+    session_id: str
+    tool: str
+    path: str
+    diff_preview: Optional[str] = None
+    bytes: Optional[int] = None
+    timeout: float = 120.0
+
+
+class ServerApprovalRequestMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    type: Literal["approval_request"] = "approval_request"
+    payload: ApprovalRequestPayload
+
+
+class SessionAutonomyPayload(BaseModel):
+    session_id: str
+    autonomy_level: int
+
+
+class ServerSessionAutonomyMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    type: Literal["session.autonomy"] = "session.autonomy"
+    payload: SessionAutonomyPayload
+
+
 ServerMessage = Annotated[
     Union[
         ServerPongMessage,
@@ -343,6 +395,8 @@ ServerMessage = Annotated[
         ServerEditUndoResultMessage,
         ServerChangesListMessage,
         ServerChangesUndoResultMessage,
+        ServerApprovalRequestMessage,
+        ServerSessionAutonomyMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -393,6 +447,12 @@ def parse_client_message(raw_text: str) -> ClientMessage:
         return ClientChangesListMessage.model_validate(raw_dict)
     elif msg_type == "changes.undo":
         return ClientChangesUndoMessage.model_validate(raw_dict)
+    elif msg_type in ("approval.response", "approval_response"):
+        raw_dict["type"] = "approval.response"
+        return ClientApprovalResponseMessage.model_validate(raw_dict)
+    elif msg_type in ("session.set_autonomy", "session_set_autonomy"):
+        raw_dict["type"] = "session.set_autonomy"
+        return ClientSessionSetAutonomyMessage.model_validate(raw_dict)
     else:
         raise ValueError(f"Unsupported message type: '{msg_type}'")
 
@@ -629,6 +689,48 @@ def create_changes_undo_result(
         restored_sha256=restored_sha256,
     )
     return ServerChangesUndoResultMessage(
+        id=reply_to_id or str(uuid4()),
+        payload=payload,
+    )
+
+
+def create_approval_request(
+    request_id: str,
+    session_id: str,
+    tool: str,
+    path: str,
+    diff_preview: Optional[str] = None,
+    bytes: Optional[int] = None,
+    timeout: float = 120.0,
+    reply_to_id: Optional[str] = None,
+) -> ServerApprovalRequestMessage:
+    """Create a typed approval_request event message."""
+    payload = ApprovalRequestPayload(
+        request_id=request_id,
+        session_id=session_id,
+        tool=tool,
+        path=path,
+        diff_preview=diff_preview,
+        bytes=bytes,
+        timeout=timeout,
+    )
+    return ServerApprovalRequestMessage(
+        id=reply_to_id or str(uuid4()),
+        payload=payload,
+    )
+
+
+def create_session_autonomy(
+    session_id: str,
+    autonomy_level: int,
+    reply_to_id: Optional[str] = None,
+) -> ServerSessionAutonomyMessage:
+    """Create a typed session.autonomy event message."""
+    payload = SessionAutonomyPayload(
+        session_id=session_id,
+        autonomy_level=autonomy_level,
+    )
+    return ServerSessionAutonomyMessage(
         id=reply_to_id or str(uuid4()),
         payload=payload,
     )

@@ -9,6 +9,7 @@ from .list_directory import ListDirectoryTool, ListDirectoryInput
 from .read_file import ReadFileTool, ReadFileInput
 from .write_file import WriteFileTool, WriteFileInput
 from .apply_patch import ApplyPatchTool, ApplyPatchInput, EditSpec
+from .approval import ApprovalManager, ApprovalRequest
 
 __all__ = [
     "ToolContext",

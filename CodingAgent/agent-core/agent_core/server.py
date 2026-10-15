@@ -28,6 +28,7 @@ from .llm import (
 )
 from .ollama_metadata import get_ollama_metadata_service
 from .protocol import (
+    ClientApprovalResponseMessage,
     ClientChangesListMessage,
     ClientChangesUndoMessage,
     ClientChatCancelMessage,
@@ -35,7 +36,9 @@ from .protocol import (
     ClientEditUndoMessage,
     ClientModelsListMessage,
     ClientPingMessage,
+    ClientSessionSetAutonomyMessage,
     TokenUsage,
+    create_approval_request,
     create_changes_list_result,
     create_changes_undo_result,
     create_delta,
@@ -44,6 +47,7 @@ from .protocol import (
     create_error,
     create_models_list,
     create_pong,
+    create_session_autonomy,
     create_tool_call,
     create_tool_result,
     parse_client_message,
@@ -52,6 +56,7 @@ from .snapshots import get_snapshot_manager
 
 from .sessions import Session, SessionManager
 from .tools import (
+    ApprovalManager,
     AuditLogger,
     GatewayInvocationResult,
     PathGuard,
@@ -328,27 +333,10 @@ def parse_text_mode_tool_calls(content: str, registry: Any) -> List[Dict[str, An
     if fences:
         candidate_texts.extend(f.strip() for f in fences if f.strip())
 
-    # 3. Direct or embedded JSON objects/arrays if no tags/fences found
+    # 3. Standalone JSON object or array (entire text must be the JSON block)
     if not candidate_texts:
         if (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
             candidate_texts.append(stripped)
-        else:
-            # Look for JSON objects {...} in the text that start with tool names or "name"
-            decoder = json.JSONDecoder()
-            idx = 0
-            while idx < len(stripped):
-                brace_pos = stripped.find("{", idx)
-                if brace_pos == -1:
-                    break
-                try:
-                    obj, end_pos = decoder.raw_decode(stripped, brace_pos)
-                    if isinstance(obj, dict) and any(k in obj for k in ("name", "tool", "tool_name", "function")):
-                        candidate_texts.append(stripped[brace_pos:end_pos])
-                        idx = end_pos
-                    else:
-                        idx = brace_pos + 1
-                except Exception:
-                    idx = brace_pos + 1
 
     parsed_tool_calls: List[Dict[str, Any]] = []
 
@@ -580,12 +568,21 @@ async def run_chat_generation(
         audit_logger = AuditLogger(audit_log_path)
         registry = create_default_registry(include_write_tools=True)
         path_guard = PathGuard(workspace_root) if workspace_root is not None else None
+        approval_manager = ApprovalManager(audit_logger=audit_logger)
         tool_gateway = ToolGateway(
             registry=registry,
             audit_logger=audit_logger,
             workspace_root=workspace_root,
             path_guard=path_guard,
+            approval_manager=approval_manager,
+            get_session_autonomy=lambda s_id: session.autonomy_level,
         )
+
+    # Attach event sink for approval_request events to current connection
+    if hasattr(tool_gateway, "approval_manager") and tool_gateway.approval_manager is not None:
+        async def _emit_approval(payload: Dict[str, Any]) -> None:
+            await conn_wrapper.send(json.dumps(payload))
+        tool_gateway.approval_manager.set_event_sink(_emit_approval)
 
     tools = tool_gateway.registry.get_openai_tool_definitions()
 
@@ -846,6 +843,7 @@ async def run_chat_generation(
                             tool_name=fn_name,
                             raw_args=parsed_args,
                             workspace_root=session.workspace_root,
+                            autonomy_level=session.autonomy_level,
                         )
                     except Exception as exc:
                         logger.exception("Unexpected exception invoking tool '%s': %s", fn_name, exc)
@@ -1092,11 +1090,34 @@ async def handle_connection(
 
             elif isinstance(msg, ClientChatCancelMessage):
                 session_id = msg.payload.session_id.strip()
+                if tool_gateway and hasattr(tool_gateway, "approval_manager") and tool_gateway.approval_manager:
+                    tool_gateway.approval_manager.cancel_session_requests(session_id)
                 cancelled = session_manager.cancel(session_id)
                 if cancelled:
                     logger.info("Client requested cancellation for session: %s", session_id)
                 else:
                     logger.info("No active generation found to cancel for session: %s", session_id)
+
+            elif isinstance(msg, ClientApprovalResponseMessage):
+                req_id = msg.payload.request_id
+                decision = msg.payload.decision
+                sess_id = msg.payload.session_id
+                if tool_gateway and hasattr(tool_gateway, "approval_manager") and tool_gateway.approval_manager:
+                    handled = await tool_gateway.approval_manager.submit_response(
+                        request_id=req_id,
+                        decision=decision,
+                        session_id=sess_id,
+                    )
+                    logger.info("Approval response for request_id=%s handled=%s decision=%s", req_id, handled, decision)
+
+            elif isinstance(msg, ClientSessionSetAutonomyMessage):
+                s_id = msg.payload.session_id.strip()
+                level = msg.payload.autonomy_level
+                sess = session_manager.get_or_create(s_id)
+                sess.set_autonomy_level(level)
+                ack = create_session_autonomy(session_id=s_id, autonomy_level=level, reply_to_id=msg.id)
+                await conn_wrapper.send(ack.model_dump_json())
+                logger.info("Session %s autonomy level set to %d", s_id, level)
 
             elif isinstance(msg, ClientEditUndoMessage):
                 session_id = msg.payload.session_id.strip()
@@ -1364,11 +1385,18 @@ class AgentCoreServer:
             audit_logger = AuditLogger(audit_log_path)
             registry = create_default_registry(include_write_tools=True)
             path_guard = PathGuard(workspace_root) if workspace_root is not None else None
+            approval_mgr = ApprovalManager(audit_logger=audit_logger)
             self.tool_gateway = ToolGateway(
                 registry=registry,
                 audit_logger=audit_logger,
                 workspace_root=workspace_root,
                 path_guard=path_guard,
+                approval_manager=approval_mgr,
+                get_session_autonomy=lambda s_id: (
+                    self.session_manager.get(s_id).autonomy_level
+                    if self.session_manager.get(s_id)
+                    else 2
+                ),
             )
         else:
             self.tool_gateway = tool_gateway

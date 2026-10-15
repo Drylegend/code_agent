@@ -5,6 +5,7 @@ import {
   type ConnectionState,
   type ModelMetadata,
   type TokenUsage,
+  type ApprovalRequestPayload,
 } from "../lib/agentSocket";
 import { ChangesPanel } from "./ChangesPanel";
 import "./ChatPanel.css";
@@ -96,6 +97,8 @@ export default function ChatPanel() {
   const [ollamaAvailable, setOllamaAvailable] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<"chat" | "changes">("chat");
   const [socketInstance, setSocketInstance] = useState<AgentSocket | null>(null);
+  const [autonomyLevel, setAutonomyLevel] = useState<number>(2);
+  const [pendingApproval, setPendingApproval] = useState<ApprovalRequestPayload | null>(null);
 
   // Single authoritative frontend session ID for this panel instance
   const sessionIdRef = useRef<string>(crypto.randomUUID());
@@ -300,6 +303,7 @@ export default function ChatPanel() {
     const unsubDone = socket.onDone((payload) => {
       if (payload.session_id !== sessionIdRef.current) return;
 
+      setPendingApproval(null);
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last && last.role === "assistant") {
@@ -320,6 +324,7 @@ export default function ChatPanel() {
     // Handle structured errors
     const unsubError = socket.onError((payload) => {
       const friendlyText = formatErrorMessage(payload.code, payload.message);
+      setPendingApproval(null);
 
       setMessages((prev) => {
         const last = prev[prev.length - 1];
@@ -348,6 +353,18 @@ export default function ChatPanel() {
       setIsGenerating(false);
     });
 
+    // Handle approval requests
+    const unsubApproval = socket.onApprovalRequest((payload) => {
+      if (payload.session_id !== sessionIdRef.current) return;
+      setPendingApproval(payload);
+    });
+
+    // Handle session autonomy changes from server
+    const unsubAutonomy = socket.onSessionAutonomy((payload) => {
+      if (payload.session_id !== sessionIdRef.current) return;
+      setAutonomyLevel(payload.autonomy_level);
+    });
+
     // Initiate connection
     socket.connect();
 
@@ -361,6 +378,8 @@ export default function ChatPanel() {
       unsubUndoResult();
       unsubDone();
       unsubError();
+      unsubApproval();
+      unsubAutonomy();
       socket.disconnect();
       socketRef.current = null;
       setSocketInstance(null);
@@ -439,6 +458,12 @@ export default function ChatPanel() {
     );
   }, [inputText, isGenerating, connectionState, selectedModel, workspaceRoot]);
 
+  const handleApprovalDecision = useCallback((decision: "approve" | "reject") => {
+    if (!pendingApproval || !socketRef.current) return;
+    socketRef.current.sendApprovalResponse(pendingApproval.request_id, decision, sessionIdRef.current);
+    setPendingApproval(null);
+  }, [pendingApproval]);
+
   const handleCancelMessage = useCallback(() => {
     if (!isGenerating) return;
 
@@ -447,6 +472,7 @@ export default function ChatPanel() {
       socket.cancelChat(sessionIdRef.current);
     }
 
+    setPendingApproval(null);
     setIsGenerating(false);
     setMessages((prev) => {
       const last = prev[prev.length - 1];
@@ -511,6 +537,27 @@ export default function ChatPanel() {
           </button>
         </div>
         <div className="chat-panel__header-right">
+          <div className="chat-panel__autonomy-control">
+            <span className="chat-panel__autonomy-label">Autonomy:</span>
+            <select
+              className="chat-panel__autonomy-select"
+              value={autonomyLevel}
+              onChange={(e) => {
+                const lvl = Number(e.target.value);
+                setAutonomyLevel(lvl);
+                if (socketRef.current) {
+                  socketRef.current.setSessionAutonomy(sessionIdRef.current, lvl);
+                }
+              }}
+              title="Autonomy level for this session. Level 2 (Ask): writes require user approval. Level 3 (Scoped): workspace writes auto-approve."
+            >
+              <option value={2}>L2: Ask</option>
+              <option value={3}>L3: Scoped</option>
+            </select>
+          </div>
+          <span className={`chat-panel__autonomy-badge chat-panel__autonomy-badge--l${autonomyLevel}`}>
+            {autonomyLevel === 2 ? "Ask (L2)" : "Scoped (L3)"}
+          </span>
           {renderStatus()}
         </div>
       </div>
@@ -715,6 +762,59 @@ export default function ChatPanel() {
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* ── Pending Approval Gate Card ── */}
+      {pendingApproval && (
+        <div className="chat-panel__approval-card" role="alert" aria-live="polite">
+          <div className="chat-panel__approval-header">
+            <div className="chat-panel__approval-title">
+              <span className="chat-panel__approval-icon">🛡️</span>
+              <span>Tool Execution Approval Required</span>
+            </div>
+            <span className="chat-panel__approval-badge">Autonomy Level 2 (Ask)</span>
+          </div>
+          <div className="chat-panel__approval-body">
+            <div className="chat-panel__approval-row">
+              <span className="chat-panel__approval-key">Tool:</span>
+              <code className="chat-panel__approval-val">{pendingApproval.tool}</code>
+            </div>
+            <div className="chat-panel__approval-row">
+              <span className="chat-panel__approval-key">Target Path:</span>
+              <code className="chat-panel__approval-val">{pendingApproval.path}</code>
+            </div>
+            {pendingApproval.bytes != null && (
+              <div className="chat-panel__approval-row">
+                <span className="chat-panel__approval-key">Size:</span>
+                <span className="chat-panel__approval-val">{pendingApproval.bytes} bytes</span>
+              </div>
+            )}
+            {pendingApproval.diff_preview && (
+              <div className="chat-panel__approval-diff-container">
+                <div className="chat-panel__approval-key">Diff Preview:</div>
+                <pre className="chat-panel__approval-diff-pre">{pendingApproval.diff_preview}</pre>
+              </div>
+            )}
+          </div>
+          <div className="chat-panel__approval-footer">
+            <button
+              type="button"
+              className="chat-panel__approval-btn chat-panel__approval-btn--approve"
+              onClick={() => handleApprovalDecision("approve")}
+              title="Allow this tool call to execute"
+            >
+              ✓ Approve
+            </button>
+            <button
+              type="button"
+              className="chat-panel__approval-btn chat-panel__approval-btn--reject"
+              onClick={() => handleApprovalDecision("reject")}
+              title="Reject this tool call"
+            >
+              ✕ Reject
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Input Controls ── */}
       <div className="chat-panel__footer">

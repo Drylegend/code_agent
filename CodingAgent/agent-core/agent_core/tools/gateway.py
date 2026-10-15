@@ -101,12 +101,16 @@ class ToolGateway:
         workspace_root: Optional[Union[str, Path]] = None,
         authorizer: Optional[Callable[[str, ToolSpec, BaseModel], AuthorizationResult]] = None,
         path_guard: Optional[PathGuard] = None,
+        approval_manager: Optional[Any] = None,
+        get_session_autonomy: Optional[Callable[[str], int]] = None,
     ) -> None:
         self.registry = registry
         self.audit_logger = audit_logger
         self.workspace_root = Path(workspace_root).resolve() if workspace_root is not None else None
         self.path_guard = path_guard or (PathGuard(self.workspace_root) if self.workspace_root is not None else None)
         self._authorizer = authorizer
+        self.approval_manager = approval_manager
+        self.get_session_autonomy = get_session_autonomy
 
     @property
     def authorizer(self) -> Callable[[str, ToolSpec, BaseModel], AuthorizationResult]:
@@ -125,6 +129,7 @@ class ToolGateway:
         tool_name: str,
         raw_args: Dict[str, Any],
         workspace_root: Optional[Union[str, Path]] = None,
+        autonomy_level: Optional[int] = None,
     ) -> GatewayInvocationResult:
         """Execute a tool through the secure gateway pipeline.
 
@@ -216,6 +221,49 @@ class ToolGateway:
                 denial_reason=auth_result.reason,
                 error=auth_result.reason or "Authorization denied",
             )
+
+        # 4b. Approval Gate Check for Write Tools
+        effective_autonomy = (
+            autonomy_level
+            if autonomy_level is not None
+            else (self.get_session_autonomy(session_id) if self.get_session_autonomy else 2)
+        )
+        if not tool.read_only and tool_name in AUTHORIZED_WRITE_TOOLS:
+            # Level 2 "Ask" requires approval for write tools
+            if effective_autonomy == 2 and self.approval_manager is not None:
+                args_data = validated_args.model_dump()
+                target_path = str(args_data.get("path", ""))
+                diff_preview: Optional[str] = None
+                byte_size: Optional[int] = None
+                if tool_name == "write_file":
+                    content = args_data.get("content", "")
+                    byte_size = len(str(content).encode("utf-8"))
+                elif tool_name == "apply_patch":
+                    diff_preview = args_data.get("patch") or json.dumps(args_data.get("edits", []))
+
+                approved = await self.approval_manager.request_approval(
+                    session_id=session_id,
+                    tool_name=tool_name,
+                    validated_args=args_data,
+                    path=target_path,
+                    diff_preview=diff_preview,
+                    byte_size=byte_size,
+                )
+                if not approved:
+                    self.audit_logger.log(
+                        session_id=session_id,
+                        tool=tool_name,
+                        args=args_data,
+                        outcome="denied",
+                        duration=0.0,
+                    )
+                    return GatewayInvocationResult(
+                        success=False,
+                        tool_name=tool_name,
+                        authorized=False,
+                        denial_reason="Tool execution rejected by user",
+                        error="Tool execution rejected by user",
+                    )
 
         # 5. Execute authorized tool
         context = ToolContext(

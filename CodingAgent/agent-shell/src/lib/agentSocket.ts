@@ -176,13 +176,34 @@ export interface ClientChangesUndoMessage {
   };
 }
 
+export interface ClientApprovalResponseMessage {
+  id: string;
+  type: "approval.response";
+  payload: {
+    request_id: string;
+    decision: "approve" | "reject";
+    session_id?: string;
+  };
+}
+
+export interface ClientSessionSetAutonomyMessage {
+  id: string;
+  type: "session.set_autonomy";
+  payload: {
+    session_id: string;
+    autonomy_level: number;
+  };
+}
+
 export type ClientMessage =
   | ClientPingMessage
   | ClientChatSendMessage
   | ClientChatCancelMessage
   | ClientModelsListMessage
   | ClientChangesListMessage
-  | ClientChangesUndoMessage;
+  | ClientChangesUndoMessage
+  | ClientApprovalResponseMessage
+  | ClientSessionSetAutonomyMessage;
 
 // Server envelopes
 export interface ServerPongMessage {
@@ -252,6 +273,40 @@ export interface ServerChangesUndoResultMessage {
   payload: ChangesUndoResultPayload;
 }
 
+export interface ApprovalRequestPayload {
+  request_id: string;
+  session_id: string;
+  tool: string;
+  path: string;
+  diff_preview?: string | null;
+  bytes?: number | null;
+  timeout: number;
+}
+
+export interface ServerApprovalRequestMessage {
+  id?: string;
+  type: "approval_request";
+  request_id?: string;
+  session_id?: string;
+  tool?: string;
+  path?: string;
+  diff_preview?: string | null;
+  bytes?: number | null;
+  timeout?: number;
+  payload?: ApprovalRequestPayload;
+}
+
+export interface SessionAutonomyPayload {
+  session_id: string;
+  autonomy_level: number;
+}
+
+export interface ServerSessionAutonomyMessage {
+  id?: string;
+  type: "session.autonomy";
+  payload: SessionAutonomyPayload;
+}
+
 export type ServerMessage =
   | ServerPongMessage
   | ServerChatDeltaMessage
@@ -261,7 +316,9 @@ export type ServerMessage =
   | ServerToolResultMessage
   | ServerModelsListMessage
   | ServerChangesListMessage
-  | ServerChangesUndoResultMessage;
+  | ServerChangesUndoResultMessage
+  | ServerApprovalRequestMessage
+  | ServerSessionAutonomyMessage;
 
 
 // ── Connection Types ──────────────────────────────────────────────────────────
@@ -289,6 +346,8 @@ export type ModelsListCallback = (payload: ModelsListPayload) => void;
 export type UndoResultCallback = (payload: EditUndoResultPayload) => void;
 export type ChangesListCallback = (changes: ChangeItem[]) => void;
 export type ChangesUndoResultCallback = (payload: ChangesUndoResultPayload) => void;
+export type ApprovalRequestCallback = (payload: ApprovalRequestPayload) => void;
+export type SessionAutonomyCallback = (payload: SessionAutonomyPayload) => void;
 
 // ── Configuration Constants ───────────────────────────────────────────────────
 
@@ -324,6 +383,8 @@ export class AgentSocket {
   private undoResultListeners = new Set<UndoResultCallback>();
   private changesListListeners = new Set<ChangesListCallback>();
   private changesUndoResultListeners = new Set<ChangesUndoResultCallback>();
+  private approvalRequestListeners = new Set<ApprovalRequestCallback>();
+  private sessionAutonomyListeners = new Set<SessionAutonomyCallback>();
 
 
   /** Current connection state. */
@@ -387,6 +448,16 @@ export class AgentSocket {
   public onChangesUndoResult(cb: ChangesUndoResultCallback): () => void {
     this.changesUndoResultListeners.add(cb);
     return () => this.changesUndoResultListeners.delete(cb);
+  }
+
+  public onApprovalRequest(cb: ApprovalRequestCallback): () => void {
+    this.approvalRequestListeners.add(cb);
+    return () => this.approvalRequestListeners.delete(cb);
+  }
+
+  public onSessionAutonomy(cb: SessionAutonomyCallback): () => void {
+    this.sessionAutonomyListeners.add(cb);
+    return () => this.sessionAutonomyListeners.delete(cb);
   }
 
 
@@ -697,6 +768,43 @@ export class AgentSocket {
         break;
       }
 
+      case "approval_request": {
+        const raw = msg as any;
+        const payload: ApprovalRequestPayload = raw.payload || {
+          request_id: raw.request_id,
+          session_id: raw.session_id,
+          tool: raw.tool,
+          path: raw.path,
+          diff_preview: raw.diff_preview,
+          bytes: raw.bytes,
+          timeout: raw.timeout ?? 120,
+        };
+        this.approvalRequestListeners.forEach((cb) => {
+          try {
+            cb(payload);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+        break;
+      }
+
+      case "session.autonomy": {
+        const raw = msg as any;
+        const payload: SessionAutonomyPayload = raw.payload || {
+          session_id: raw.session_id,
+          autonomy_level: raw.autonomy_level ?? 2,
+        };
+        this.sessionAutonomyListeners.forEach((cb) => {
+          try {
+            cb(payload);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+        break;
+      }
+
       default:
         console.warn("[AgentSocket] unhandled message type:", (msg as { type: string }).type);
     }
@@ -826,6 +934,44 @@ export class AgentSocket {
         workspace_root: workspaceRoot ?? undefined,
         force: !!force,
         call_id: callId ?? undefined,
+      },
+    };
+    this.sendJson(message);
+    return id;
+  }
+
+  /** Send user approval decision for a pending tool call. */
+  public sendApprovalResponse(
+    requestId: string,
+    decision: "approve" | "reject",
+    sessionId?: string
+  ): string {
+    const id = crypto.randomUUID();
+    const message: ClientApprovalResponseMessage = {
+      id,
+      type: "approval.response",
+      payload: {
+        request_id: requestId,
+        decision,
+        session_id: sessionId,
+      },
+    };
+    this.sendJson(message);
+    return id;
+  }
+
+  /** Set session autonomy level (2: Ask, 3: Scoped). */
+  public setSessionAutonomy(
+    sessionId: string,
+    autonomyLevel: number
+  ): string {
+    const id = crypto.randomUUID();
+    const message: ClientSessionSetAutonomyMessage = {
+      id,
+      type: "session.set_autonomy",
+      payload: {
+        session_id: sessionId,
+        autonomy_level: autonomyLevel,
       },
     };
     this.sendJson(message);
