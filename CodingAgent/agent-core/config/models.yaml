@@ -1,0 +1,20 @@
+# Model configurations for agent-core
+#
+# NOTE: Replace placeholder model values below with the models actually installed in your Ollama instance.
+# Run `ollama list` in PowerShell to see currently available models (e.g. qwen2.5-coder:7b, llama3.2:3b).
+
+models:
+  local-fast:
+    alias: local-fast
+    model: ollama/qwen2.5:3b
+    api_base: http://127.0.0.1:11434
+    context_window: 131072
+    usable_budget: 8192
+
+  local-coder:
+    alias: local-coder
+    model: ollama/qwen2.5-coder:7b
+    api_base: http://127.0.0.1:11434
+    context_window: 32768
+    usable_budget: 16384
+    tool_mode: text_json

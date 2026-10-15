@@ -1,0 +1,135 @@
+/* ── Global reset and App layout ─────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1b26;
+}
+
+.app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Dragging overlay state to prevent text selection and capture in child canvas/terminals */
+.app--resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.app--resizing * {
+  user-select: none !important;
+  pointer-events: none !important;
+}
+
+.app--resizing .app__resizer,
+.app--resizing .app__resizer * {
+  pointer-events: auto !important;
+}
+
+.app__chat-container {
+  height: 100%;
+  display: flex;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* ── Resizer Affordance & Divider ─────────────────────────────────────────── */
+
+.app__resizer {
+  width: 6px;
+  height: 100%;
+  background: #1e2030;
+  border-right: 1px solid #292e42;
+  cursor: col-resize;
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: background 0.15s ease;
+}
+
+.app__resizer:hover,
+.app__resizer--dragging {
+  background: #3b4261;
+}
+
+/* Expanded invisible hit area for easier grabbing */
+.app__resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+}
+
+.app__resizer-handle {
+  width: 2px;
+  height: 32px;
+  background: #414868;
+  border-radius: 1px;
+}
+
+.app__resizer:hover .app__resizer-handle,
+.app__resizer--dragging .app__resizer-handle {
+  background: #7aa2f7;
+}
+
+.app__collapse-btn {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 22px;
+  background: #16161e;
+  border: 1px solid #3b4261;
+  border-radius: 3px;
+  color: #7aa2f7;
+  font-size: 8px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  z-index: 20;
+  transition: all 0.15s ease;
+}
+
+.app__collapse-btn:hover {
+  background: #24283b;
+  color: #c0caf5;
+  border-color: #7aa2f7;
+}
+
+.app__resizer--collapsed {
+  width: 14px;
+  cursor: pointer;
+}
+
+.app__terminal-container {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+}
+

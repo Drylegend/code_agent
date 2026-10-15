@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-core"
+version = "0.1.0"
+description = "Personal coding agent core Python sidecar"
+requires-python = ">=3.12"
+dependencies = [
+    "litellm>=1.100.0",
+    "websockets>=17.0",
+    "pydantic>=2.0,<3.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+agent-core = "agent_core.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".venv", "node_modules", "logs"]

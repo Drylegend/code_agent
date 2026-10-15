@@ -1,0 +1,25 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# Application logs
+logs/
+*.log
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Environment variables
+.env
+.env.*
