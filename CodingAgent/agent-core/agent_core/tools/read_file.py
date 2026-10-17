@@ -47,18 +47,18 @@ def is_binary_content(header_bytes: bytes) -> bool:
 class ReadFileInput(BaseModel):
     """Input parameters for reading a file."""
 
-    path: str = Field(..., description="Path of the file to read (relative to workspace root)")
+    path: str = Field(..., description="File path relative to workspace root")
     start_line: Optional[int] = Field(
         default=None,
         gt=0,
         le=10_000_000,
-        description="1-based start line number (default: 1)",
+        description="1-based start line (default 1)",
     )
     end_line: Optional[int] = Field(
         default=None,
         gt=0,
         le=10_000_000,
-        description="1-based end line number (inclusive)",
+        description="1-based end line (inclusive)",
     )
 
     @model_validator(mode="after")
@@ -76,10 +76,7 @@ class ReadFileTool(ToolSpec):
     """Read file contents safely from the workspace with chunking and security guards."""
 
     name = "read_file"
-    description = (
-        "Read contents of a text file in the workspace. Supports 1-based start_line and end_line, "
-        "enforces 64 KB and 2000-line limits per call, and refuses binary files."
-    )
+    description = "Read contents of a text file in the workspace."
     input_model = ReadFileInput
     read_only = True
 

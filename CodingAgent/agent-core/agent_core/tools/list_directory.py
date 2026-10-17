@@ -30,17 +30,17 @@ class ListDirectoryInput(BaseModel):
 
     path: str = Field(
         default=".",
-        description="Path of the directory to list (relative to workspace root)",
+        description="Directory path relative to workspace root (default '.')",
     )
     recursive: bool = Field(
         default=False,
-        description="Whether to enumerate subdirectories recursively. Defaults to False (non-recursive).",
+        description="Enumerate subdirectories recursively (default false)",
     )
     max_entries: int = Field(
         default=200,
         gt=0,
         le=1000,
-        description="Maximum entries to return (1-1000, default 200)",
+        description="Max entries to return (default 200)",
     )
 
     @field_validator("path", mode="before")
@@ -55,11 +55,7 @@ class ListDirectoryTool(ToolSpec):
     """List directory contents within the workspace root with security guards."""
 
     name = "list_directory"
-    description = (
-        "List files and subdirectories in a directory within the workspace. "
-        "Non-recursive by default. Set recursive=True to enumerate subdirectories recursively. "
-        "Returns item names, types ('file' or 'dir'), and file sizes in bytes. Capped at 200 entries."
-    )
+    description = "List files and subdirectories in a workspace directory."
     input_model = ListDirectoryInput
     read_only = True
 

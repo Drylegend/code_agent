@@ -33,11 +33,11 @@ class GlobInput(BaseModel):
 
     pattern: str = Field(
         ...,
-        description="Glob pattern to search for files (e.g. '**/*.py', 'src/**/*.tsx', '*.json'). Supports ** and standard wildcard syntax. Use glob instead of repeated list_directory calls to find files quickly.",
+        description="Glob pattern to search for files (e.g. '**/*.py')",
     )
     path: Optional[str] = Field(
         default=None,
-        description="Optional directory path to search within, relative to workspace root (defaults to workspace root).",
+        description="Directory path relative to workspace root",
     )
 
 
@@ -61,12 +61,7 @@ class GlobTool(ToolSpec):
     """Locate files in the workspace matching a glob pattern."""
 
     name = "glob"
-    description = (
-        "Search for files matching a glob pattern in the workspace. Supports '**' recursive wildcard "
-        "and standard wildcard syntax. Automatically skips .git, node_modules, build directories, and "
-        "agent store/log folders. Returns sorted relative paths up to 200 results. Use this tool instead of "
-        "multiple list_directory calls when searching for specific file types or filenames."
-    )
+    description = "Search for files matching a glob pattern in the workspace."
     input_model = GlobInput
     read_only = True
 

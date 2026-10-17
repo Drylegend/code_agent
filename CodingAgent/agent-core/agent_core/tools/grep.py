@@ -41,29 +41,29 @@ class GrepInput(BaseModel):
 
     pattern: str = Field(
         ...,
-        description="Search pattern string or regular expression. Use grep instead of repeated read_file calls to find text or code patterns.",
+        description="Search pattern string or regex",
     )
     path: Optional[str] = Field(
         default=None,
-        description="Optional directory or file path relative to workspace root (defaults to workspace root).",
+        description="Directory or file path to search (e.g. 'src', default '.')",
     )
     glob: Optional[str] = Field(
         default=None,
-        description="Optional glob pattern to filter candidate files, e.g. '*.py' or '**/*.ts'.",
+        description="Filename pattern filter (e.g. '*.py')",
     )
     regex: bool = Field(
         default=False,
-        description="Whether to interpret pattern as a regular expression. Defaults to False (exact literal string search).",
+        description="Whether pattern is a regex (default false)",
     )
     case_sensitive: bool = Field(
         default=False,
-        description="Whether search is case-sensitive. Defaults to False.",
+        description="Case-sensitive match (default false)",
     )
     max_results: int = Field(
         default=100,
         ge=1,
         le=MAX_RESULTS_HARD_CAP,
-        description="Maximum number of matching lines to return (default 100, capped at 200).",
+        description="Max match lines to return (default 100)",
     )
 
 
@@ -81,12 +81,7 @@ class GrepTool(ToolSpec):
     """Search workspace files for matching strings or regular expressions."""
 
     name = "grep"
-    description = (
-        "Search file contents in the workspace for text or regex patterns without reading each file completely. "
-        "Supports literal search (default) and regex search (regex=true), file path scoping, and glob filtering. "
-        "Automatically skips binary files, files >1MB, .git, and node_modules. "
-        "Returns structured results with file paths, 1-based line numbers, and truncated snippets."
-    )
+    description = "Search file contents for a pattern across workspace files."
     input_model = GrepInput
     read_only = True
 

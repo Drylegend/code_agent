@@ -36,11 +36,11 @@ def decode_unicode_escapes(text: str) -> str:
 class EditSpec(BaseModel):
     """Specification for an individual text replacement within a patch."""
 
-    old_text: str = Field(..., min_length=1, description="Exact text to find and replace")
+    old_text: str = Field(..., min_length=1, description="Exact unique text to replace")
     new_text: str = Field(..., description="Replacement text")
     occurrence: Optional[int] = Field(
         default=None,
-        description="1-based index of the specific occurrence to replace when match_count > 1",
+        description="1-based match index if repeated",
     )
 
 
@@ -49,16 +49,16 @@ class ApplyPatchInput(BaseModel):
 
     path: str = Field(
         ...,
-        description="Path of the file to modify (relative to workspace root)",
+        description="File path relative to workspace root",
     )
     edits: List[EditSpec] = Field(
         ...,
         min_length=1,
-        description="Sequential list of exact text replacements to apply",
+        description="Sequential text replacements to apply",
     )
     replace_all: bool = Field(
         default=False,
-        description="Whether to replace all occurrences of old_text instead of requiring exactly one match",
+        description="Replace all occurrences of old_text",
     )
 
 
@@ -93,8 +93,7 @@ class ApplyPatchTool(ToolSpec):
     name = "apply_patch"
     description = (
         "Apply targeted text edits to an existing text file. Each edit specifies old_text and new_text. "
-        "By default, each old_text must match exactly once. Line endings (CRLF vs LF) and BOMs are preserved. "
-        "Maximum patch size is 256 KB and maximum resulting file size is 1 MB. "
+        "By default, each old_text must match exactly once. "
         "For an insertion: old_text should be a unique existing line or block; new_text should preserve that "
         "existing text and add the requested content; do not use a short/common token such as '\\n' as old_text; "
         "do not use replace_all for a single insertion unless the user explicitly requested every occurrence."

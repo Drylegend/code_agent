@@ -23,15 +23,15 @@ class WriteFileInput(BaseModel):
 
     path: str = Field(
         ...,
-        description="Path of the file to write (relative to workspace root)",
+        description="File path relative to workspace root",
     )
     content: str = Field(
         ...,
-        description="Complete text content to write to the file",
+        description="Complete file content to write",
     )
     overwrite: bool = Field(
         default=False,
-        description="Set to true to overwrite an existing file. If false and file exists, write will fail.",
+        description="Set true to overwrite an existing file",
     )
 
 
@@ -39,11 +39,7 @@ class WriteFileTool(ToolSpec):
     """Safely write or create text files within the workspace root."""
 
     name = "write_file"
-    description = (
-        "Create a new text file or replace an existing file in the workspace. "
-        "Overwriting existing files requires overwrite=true. Maximum file size is 1 MB. "
-        "Parent directories are not created automatically."
-    )
+    description = "Create a file or overwrite an existing file in the workspace."
     input_model = WriteFileInput
     read_only = False
 
