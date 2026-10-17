@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 from pathlib import Path
 import time
 import traceback
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -18,6 +19,122 @@ from .path_guard import PathGuard, PathGuardError
 from .registry import ToolRegistry
 
 logger = logging.getLogger("agent_core.gateway")
+
+# Maximum size for diff preview text sent to the UI (4 KB).
+MAX_PREVIEW_SIZE = 4096
+
+
+def _cap_preview(text: str) -> str:
+    """Cap preview text at MAX_PREVIEW_SIZE with truncation marker."""
+    if len(text) > MAX_PREVIEW_SIZE:
+        return text[:MAX_PREVIEW_SIZE] + "\n... (preview truncated at 4 KB)"
+    return text
+
+
+def _read_file_safe(path: Path) -> Optional[str]:
+    """Read a file's text content, returning None on any error."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return None
+
+
+def _compute_write_file_preview(
+    target_path_str: str,
+    new_content: str,
+    workspace_root: Path,
+) -> str:
+    """Compute a preview for write_file approval requests.
+
+    - For an existing file: unified diff of old vs new content.
+    - For a new file: byte size + first N lines.
+    """
+    resolved = workspace_root / target_path_str
+    if resolved.exists() and resolved.is_file():
+        old_content = _read_file_safe(resolved)
+        if old_content is not None:
+            old_lines = old_content.splitlines(keepends=True)
+            new_lines = new_content.splitlines(keepends=True)
+            diff = difflib.unified_diff(
+                old_lines, new_lines,
+                fromfile=f"a/{target_path_str}",
+                tofile=f"b/{target_path_str}",
+                lineterm="",
+            )
+            diff_text = "\n".join(diff)
+            if not diff_text:
+                return "(no changes)"
+            return _cap_preview(diff_text)
+        else:
+            return _cap_preview(f"(existing file unreadable; overwriting with {len(new_content.encode('utf-8'))} bytes)")
+    else:
+        # New file
+        byte_size = len(new_content.encode("utf-8"))
+        lines = new_content.splitlines()
+        max_preview_lines = 20
+        if len(lines) <= max_preview_lines:
+            first_lines = "\n".join(lines)
+        else:
+            first_lines = "\n".join(lines[:max_preview_lines]) + f"\n... ({len(lines) - max_preview_lines} more lines)"
+        preview = f"New file: {byte_size} bytes, {len(lines)} lines\n{first_lines}"
+        return _cap_preview(preview)
+
+
+def _compute_apply_patch_diff(
+    target_path_str: str,
+    args_data: Dict[str, Any],
+    workspace_root: Path,
+) -> str:
+    """Compute a real unified diff for apply_patch approval requests.
+
+    Simulates the edits against the current file content to produce a true diff.
+    Falls back to JSON dump of edits if the file can't be read or simulation fails.
+    """
+    resolved = workspace_root / target_path_str
+    if not resolved.exists() or not resolved.is_file():
+        edits = args_data.get("edits", [])
+        return _cap_preview(json.dumps(edits, indent=2))
+
+    old_content = _read_file_safe(resolved)
+    if old_content is None:
+        edits = args_data.get("edits", [])
+        return _cap_preview(json.dumps(edits, indent=2))
+
+    # Simulate edits to produce the new content
+    new_content = old_content
+    edits: List[Dict[str, Any]] = args_data.get("edits", [])
+    replace_all = bool(args_data.get("replace_all", False))
+
+    try:
+        for edit in edits:
+            old_text = edit.get("old_text", "")
+            new_text = edit.get("new_text", "")
+            if not old_text:
+                continue
+            if replace_all:
+                new_content = new_content.replace(old_text, new_text)
+            else:
+                # Replace first occurrence only (default)
+                new_content = new_content.replace(old_text, new_text, 1)
+    except Exception:
+        edits_list = args_data.get("edits", [])
+        return _cap_preview(json.dumps(edits_list, indent=2))
+
+    old_lines = old_content.splitlines(keepends=True)
+    new_lines = new_content.splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{target_path_str}",
+        tofile=f"b/{target_path_str}",
+        lineterm="",
+    )
+    diff_text = "\n".join(diff)
+    if not diff_text:
+        return "(no changes)"
+    return _cap_preview(diff_text)
 
 
 class AuthorizationResult(BaseModel):
@@ -247,8 +364,13 @@ class ToolGateway:
                     if tool_name == "write_file":
                         content = args_data.get("content", "")
                         byte_size = len(str(content).encode("utf-8"))
+                        diff_preview = _compute_write_file_preview(
+                            target_path, content, effective_root,
+                        )
                     elif tool_name == "apply_patch":
-                        diff_preview = args_data.get("patch") or json.dumps(args_data.get("edits", []))
+                        diff_preview = _compute_apply_patch_diff(
+                            target_path, args_data, effective_root,
+                        )
 
                     approved = await self.approval_manager.request_approval(
                         session_id=session_id,
