@@ -320,3 +320,66 @@ async def test_context_usage_percent_warnings(tmp_path: Path):
 
     status_events60 = [m for m in mock_ws.sent if m.get("type") == "context.status"]
     assert any("Context warning" in (m["payload"].get("warning") or "") for m in status_events60)
+
+
+@pytest.mark.anyio
+async def test_truncation_detection_fires_when_prompt_exceeds_num_ctx(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """Proves truncation detection fires when prompt tokens exceed num_ctx with simulated Ollama response."""
+    mock_ws = MockWs()
+    conn = ConnectionWrapper(mock_ws)
+    gateway = _make_mock_gateway(tmp_path)
+
+    cfg = ModelConfig(
+        alias="test-exceed",
+        model="ollama/qwen2.5:3b",
+        context_window=8192,
+        num_ctx=2048,
+        usable_budget=1536,
+    )
+
+    session = Session(session_id="sess-exceed", workspace_root=str(tmp_path))
+    session.add_user_message("Excessive prompt request")
+
+    # Simulate Ollama returning prompt_tokens = 2500 (exceeds num_ctx of 2048)
+    simulated_ollama_resp = type("Resp", (), {
+        "choices": [type("C", (), {
+            "message": type("M", (), {"content": "Processed after cut", "tool_calls": None})(),
+        })()],
+        "usage": type("U", (), {
+            "prompt_tokens": 2500,
+            "completion_tokens": 15,
+            "total_tokens": 2515,
+        })(),
+    })()
+
+    with caplog.at_level(logging.WARNING), \
+         patch("agent_core.server.acompletion_with_tools", return_value=simulated_ollama_resp):
+        await run_chat_generation(
+            session=session,
+            model_config=cfg,
+            request_id="req-exceed",
+            conn_wrapper=conn,
+            logger=logging.getLogger("test"),
+            tool_gateway=gateway,
+        )
+
+    # 1. Truncation warning was logged with exact token comparison
+    truncation_logs = [r.message for r in caplog.records if "PROMPT TRUNCATION DETECTED" in r.message]
+    assert len(truncation_logs) == 1
+    assert "prompt_tokens=2500 >= num_ctx=2048" in truncation_logs[0]
+
+    # 2. context.status message emitted with truncated: True and usage > 100%
+    status_events = [m for m in mock_ws.sent if m.get("type") == "context.status"]
+    assert len(status_events) >= 1
+    ev = status_events[0]["payload"]
+    assert ev["truncated"] is True
+    assert ev["prompt_tokens"] == 2500
+    assert ev["num_ctx"] == 2048
+    assert ev["usage_percent"] > 100.0
+    assert "Context TRUNCATED" in ev["warning"]
+
+    # 3. Final chat.done message flags truncated: True
+    done_events = [m for m in mock_ws.sent if m.get("type") == "chat.done"]
+    assert len(done_events) >= 1
+    assert done_events[0]["payload"]["usage"]["truncated"] is True
+

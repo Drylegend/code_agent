@@ -113,12 +113,14 @@ async def acompletion_with_tools(
         model_name = "ollama_chat/" + model_name[len("ollama/"):]
 
     tool_names = [t.get("function", {}).get("name") for t in (tools or [])]
+    ollama_options = {"num_ctx": model_config.num_ctx}
     logger.info(
-        "LLM request: model=%s, tool_mode=%s, tool_count=%d, tools=%s",
+        "LLM request options sent to Ollama: model=%s, tool_mode=%s, tool_count=%d, tools=%s, options=%s",
         model_name,
         model_config.tool_mode,
         len(tool_names),
         tool_names,
+        ollama_options,
     )
 
     kwargs: Dict[str, Any] = {
@@ -174,6 +176,12 @@ async def stream_chat_completion(
         asyncio.CancelledError: When generation is cancelled by the caller.
     """
     try:
+        ollama_options = {"num_ctx": model_config.num_ctx}
+        logger.info(
+            "LLM stream request options sent to Ollama: model=%s, options=%s",
+            model_config.model,
+            ollama_options,
+        )
         response = await litellm.acompletion(
             model=model_config.model,
             api_base=model_config.api_base,

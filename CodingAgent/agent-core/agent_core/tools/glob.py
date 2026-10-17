@@ -43,6 +43,8 @@ class GlobInput(BaseModel):
 
 def matches_glob_pattern(rel_path: str, pattern: str) -> bool:
     """Evaluate if a relative path matches a glob pattern, supporting ** for 0+ directories."""
+    if not pattern:
+        return False
     if pattern in ("**", "**/*", "*"):
         return True
     pure = PurePath(rel_path)
