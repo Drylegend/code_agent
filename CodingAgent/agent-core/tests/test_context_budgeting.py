@@ -87,7 +87,7 @@ def test_models_yaml_contains_explicit_num_ctx():
     fast = config["local-fast"]
     assert fast.num_ctx == 8192
     assert fast.usable_budget == 6144
-    assert fast.context_window == 131072
+    assert fast.context_window == 32768
 
     assert "local-coder" in config
     coder = config["local-coder"]
