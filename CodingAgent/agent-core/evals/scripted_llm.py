@@ -148,6 +148,36 @@ def get_scripted_llm_for_task(task_id: str):
                 )
             return ScriptedResponse(content="Inspected calc.py and updated multiply() to return a * b.")
 
+        elif task_id.startswith("task_6b"):
+            if step == 1:
+                # Turn 1: attempt 1 (rejected)
+                return ScriptedResponse(
+                    content=None,
+                    tool_calls=[
+                        ScriptedToolCall(
+                            "call_t6b_1",
+                            "write_file",
+                            json.dumps({"path": "deploy.txt", "content": "status: attempt_1\n", "overwrite": True}),
+                        )
+                    ],
+                )
+            elif step == 2:
+                # Turn 1 completion: acknowledge rejection
+                return ScriptedResponse(content="The user rejected the modification to deploy.txt. Please provide an alternative instruction.")
+            elif step == 3:
+                # Turn 2: user asks for approved_v2
+                return ScriptedResponse(
+                    content=None,
+                    tool_calls=[
+                        ScriptedToolCall(
+                            "call_t6b_2",
+                            "write_file",
+                            json.dumps({"path": "deploy.txt", "content": "status: approved_v2\n", "overwrite": True}),
+                        )
+                    ],
+                )
+            return ScriptedResponse(content="Updated deploy.txt to 'status: approved_v2'.")
+
         elif task_id.startswith("task_6"):
             if step == 1:
                 # First attempt: write attempt_1 (will be rejected by harness approval policy)
@@ -161,19 +191,7 @@ def get_scripted_llm_for_task(task_id: str):
                         )
                     ],
                 )
-            elif step == 2:
-                # Second attempt after rejection notice: write attempt_2 (approved)
-                return ScriptedResponse(
-                    content=None,
-                    tool_calls=[
-                        ScriptedToolCall(
-                            "call_t6_2",
-                            "write_file",
-                            json.dumps({"path": "deploy.txt", "content": "status: attempt_2\n", "overwrite": True}),
-                        )
-                    ],
-                )
-            return ScriptedResponse(content="Updated deploy.txt to 'status: attempt_2'.")
+            return ScriptedResponse(content="The user rejected the modification to deploy.txt. I will not proceed. Please let me know if you would like an alternative.")
 
         elif task_id.startswith("task_7"):
             if step == 1:

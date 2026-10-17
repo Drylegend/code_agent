@@ -93,6 +93,8 @@ async def run_single_task(
         approval_attempts: Dict[str, int] = {}
         stop_approvals = asyncio.Event()
 
+        approval_history: List[Dict[str, Any]] = []
+
         async def approval_worker():
             processed_requests = set()
             while not stop_approvals.is_set():
@@ -110,6 +112,15 @@ async def run_single_task(
                             decision, reason = task.approval_policy(tool_name, req, attempt_num)
                         else:
                             decision, reason = "approve", None
+
+                        approval_history.append({
+                            "request_id": req_id,
+                            "tool": tool_name,
+                            "args": req.get("args"),
+                            "attempt": attempt_num,
+                            "decision": decision,
+                            "reason": reason,
+                        })
 
                         run_logger.info(
                             "Auto-responding to approval request %s for %s: %s (attempt %d)",
@@ -148,6 +159,16 @@ async def run_single_task(
                         logger=run_logger,
                         tool_gateway=gateway,
                     )
+                    if getattr(task, "followup_prompt", None):
+                        session.add_user_message(task.followup_prompt)
+                        await run_chat_generation(
+                            session=session,
+                            model_config=model_config,
+                            request_id=f"req-{task.task_id}-followup",
+                            conn_wrapper=conn_wrapper,
+                            logger=run_logger,
+                            tool_gateway=gateway,
+                        )
             else:
                 # Live mode against actual Ollama model
                 await run_chat_generation(
@@ -158,6 +179,16 @@ async def run_single_task(
                     logger=run_logger,
                     tool_gateway=gateway,
                 )
+                if getattr(task, "followup_prompt", None):
+                    session.add_user_message(task.followup_prompt)
+                    await run_chat_generation(
+                        session=session,
+                        model_config=model_config,
+                        request_id=f"req-{task.task_id}-followup",
+                        conn_wrapper=conn_wrapper,
+                        logger=run_logger,
+                        tool_gateway=gateway,
+                    )
         except Exception as exc:
             run_logger.exception("Error executing task %s: %s", task.task_id, exc)
             error_msg = str(exc)
@@ -256,4 +287,19 @@ async def run_single_task(
             "max_context_percent": round(max_context_pct, 1),
             "wall_time": wall_time,
             "unintended_file_changes": unintended_changes,
+            "transcript": {
+                "task_id": task.task_id,
+                "task_name": task.name,
+                "prompt": task.prompt,
+                "followup_prompt": getattr(task, "followup_prompt", None),
+                "messages": session.get_messages(),
+                "tool_calls": tool_call_msgs,
+                "tool_results": tool_result_msgs,
+                "approvals": approval_history,
+                "nudges_fired": nudges_fired,
+                "initial_hashes": initial_hashes,
+                "final_hashes": final_hashes,
+                "unintended_file_changes": unintended_changes,
+                "final_assistant_text": final_assistant_text,
+            },
         }

@@ -15,5 +15,5 @@ async def test_eval_task_scripted_passes(task):
     record = await run_single_task(task, mode="scripted")
     assert record["success"] is True, f"Task {task.task_id} failed: {record['reason']}"
     assert record["unintended_file_changes"] == []
-    expected_errors = 1 if task.task_id == "task_6_l2_reject_retry" else 0
+    expected_errors = 1 if task.task_id in ("task_6_l2_reject_retry", "task_6b_reject_new_instruction") else 0
     assert record["tool_errors"] == expected_errors
