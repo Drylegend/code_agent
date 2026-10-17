@@ -18,6 +18,21 @@ export interface TokenUsage {
   prompt: number;
   completion: number;
   total: number;
+  num_ctx?: number;
+  usable_budget?: number;
+  usage_percent?: number;
+  truncated?: boolean;
+  warning?: string | null;
+}
+
+export interface ContextStatusPayload {
+  session_id: string;
+  prompt_tokens: number;
+  num_ctx: number;
+  usable_budget: number;
+  usage_percent: number;
+  truncated?: boolean;
+  warning?: string | null;
 }
 
 export interface ChatSendPayload {
@@ -307,6 +322,12 @@ export interface ServerSessionAutonomyMessage {
   payload: SessionAutonomyPayload;
 }
 
+export interface ServerContextStatusMessage {
+  id?: string;
+  type: "context.status";
+  payload: ContextStatusPayload;
+}
+
 export type ServerMessage =
   | ServerPongMessage
   | ServerChatDeltaMessage
@@ -318,7 +339,8 @@ export type ServerMessage =
   | ServerChangesListMessage
   | ServerChangesUndoResultMessage
   | ServerApprovalRequestMessage
-  | ServerSessionAutonomyMessage;
+  | ServerSessionAutonomyMessage
+  | ServerContextStatusMessage;
 
 
 // ── Connection Types ──────────────────────────────────────────────────────────
@@ -348,6 +370,7 @@ export type ChangesListCallback = (changes: ChangeItem[]) => void;
 export type ChangesUndoResultCallback = (payload: ChangesUndoResultPayload) => void;
 export type ApprovalRequestCallback = (payload: ApprovalRequestPayload) => void;
 export type SessionAutonomyCallback = (payload: SessionAutonomyPayload) => void;
+export type ContextStatusCallback = (payload: ContextStatusPayload) => void;
 
 // ── Configuration Constants ───────────────────────────────────────────────────
 
@@ -385,6 +408,7 @@ export class AgentSocket {
   private changesUndoResultListeners = new Set<ChangesUndoResultCallback>();
   private approvalRequestListeners = new Set<ApprovalRequestCallback>();
   private sessionAutonomyListeners = new Set<SessionAutonomyCallback>();
+  private contextStatusListeners = new Set<ContextStatusCallback>();
 
 
   /** Current connection state. */
@@ -458,6 +482,11 @@ export class AgentSocket {
   public onSessionAutonomy(cb: SessionAutonomyCallback): () => void {
     this.sessionAutonomyListeners.add(cb);
     return () => this.sessionAutonomyListeners.delete(cb);
+  }
+
+  public onContextStatus(cb: ContextStatusCallback): () => void {
+    this.contextStatusListeners.add(cb);
+    return () => this.contextStatusListeners.delete(cb);
   }
 
 
@@ -796,6 +825,19 @@ export class AgentSocket {
           autonomy_level: raw.autonomy_level ?? 2,
         };
         this.sessionAutonomyListeners.forEach((cb) => {
+          try {
+            cb(payload);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+        break;
+      }
+
+      case "context.status": {
+        const raw = msg as any;
+        const payload: ContextStatusPayload = raw.payload;
+        this.contextStatusListeners.forEach((cb) => {
           try {
             cb(payload);
           } catch (e) {

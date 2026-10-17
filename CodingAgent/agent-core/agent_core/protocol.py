@@ -63,6 +63,11 @@ class TokenUsage(BaseModel):
     prompt: int = 0
     completion: int = 0
     total: int = 0
+    num_ctx: Optional[int] = None
+    usable_budget: Optional[int] = None
+    usage_percent: Optional[float] = None
+    truncated: bool = False
+    warning: Optional[str] = None
 
 
 class ChatDonePayload(BaseModel):
@@ -383,6 +388,22 @@ class ServerSessionAutonomyMessage(BaseModel):
     payload: SessionAutonomyPayload
 
 
+class ContextStatusPayload(BaseModel):
+    session_id: str
+    prompt_tokens: int
+    num_ctx: int
+    usable_budget: int
+    usage_percent: float
+    truncated: bool = False
+    warning: Optional[str] = None
+
+
+class ServerContextStatusMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    type: Literal["context.status"] = "context.status"
+    payload: ContextStatusPayload
+
+
 ServerMessage = Annotated[
     Union[
         ServerPongMessage,
@@ -397,6 +418,7 @@ ServerMessage = Annotated[
         ServerChangesUndoResultMessage,
         ServerApprovalRequestMessage,
         ServerSessionAutonomyMessage,
+        ServerContextStatusMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -731,6 +753,32 @@ def create_session_autonomy(
         autonomy_level=autonomy_level,
     )
     return ServerSessionAutonomyMessage(
+        id=reply_to_id or str(uuid4()),
+        payload=payload,
+    )
+
+
+def create_context_status(
+    session_id: str,
+    prompt_tokens: int,
+    num_ctx: int,
+    usable_budget: int,
+    usage_percent: float,
+    truncated: bool = False,
+    warning: Optional[str] = None,
+    reply_to_id: Optional[str] = None,
+) -> ServerContextStatusMessage:
+    """Create a typed context.status event message."""
+    payload = ContextStatusPayload(
+        session_id=session_id,
+        prompt_tokens=prompt_tokens,
+        num_ctx=num_ctx,
+        usable_budget=usable_budget,
+        usage_percent=round(usage_percent, 1),
+        truncated=truncated,
+        warning=warning,
+    )
+    return ServerContextStatusMessage(
         id=reply_to_id or str(uuid4()),
         payload=payload,
     )

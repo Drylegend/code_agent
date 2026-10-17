@@ -127,6 +127,7 @@ async def acompletion_with_tools(
         "messages": messages,
         "stream": False,
         "num_retries": 0,
+        "num_ctx": model_config.num_ctx,
     }
     if tools:
         kwargs["tools"] = tools
@@ -180,6 +181,7 @@ async def stream_chat_completion(
             stream=True,
             stream_options={"include_usage": True},
             num_retries=0,
+            num_ctx=model_config.num_ctx,
         )
     except APIConnectionError as exc:
         raise LLMServiceError(

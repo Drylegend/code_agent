@@ -985,4 +985,48 @@
   background: #7e2d3e;
 }
 
+/* ── Context Status Badge ─────────────────────────────────────────────────── */
+
+.chat-panel__context-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  letter-spacing: 0.2px;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.chat-panel__context-badge--normal {
+  background: #1f2335;
+  color: #7aa2f7;
+  border-color: #2f3549;
+}
+
+.chat-panel__context-badge--notice {
+  background: #2b2b3a;
+  color: #e0af68;
+  border-color: #e0af68;
+}
+
+.chat-panel__context-badge--warning {
+  background: #3b2a26;
+  color: #ff9e64;
+  border-color: #ff9e64;
+}
+
+.chat-panel__context-badge--truncated {
+  background: #4a1f26;
+  color: #f7768e;
+  border-color: #f7768e;
+  animation: pulse-truncation 1.5s infinite;
+}
+
+@keyframes pulse-truncation {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
 

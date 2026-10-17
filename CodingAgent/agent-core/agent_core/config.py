@@ -11,13 +11,22 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ModelConfig(BaseModel):
-    """Configuration for a single model alias."""
+    """Configuration for a single model alias.
+
+    Fields:
+        context_window: Model's theoretical maximum context size.
+        num_ctx:        Actual context size sent to Ollama (controls VRAM/RAM allocation).
+                        Must be <= context_window.
+        usable_budget:  Fraction of num_ctx considered safe before warnings/compaction advice.
+                        Must be <= num_ctx.
+    """
 
     alias: str
     model: str
     api_base: str = "http://127.0.0.1:11434"
     context_window: int = 32768
-    usable_budget: int = 8192
+    num_ctx: int = 8192
+    usable_budget: int = 6144
     tool_mode: Optional[str] = None
 
     @field_validator("alias", "model", "api_base")
@@ -26,6 +35,18 @@ class ModelConfig(BaseModel):
         if not v or not v.strip():
             raise ValueError("Field cannot be empty or whitespace only")
         return v.strip()
+
+    @model_validator(mode="after")
+    def validate_budget_and_ctx(self) -> "ModelConfig":
+        if self.num_ctx > self.context_window:
+            raise ValueError(
+                f"num_ctx ({self.num_ctx}) cannot exceed model context_window ({self.context_window})"
+            )
+        if self.usable_budget > self.num_ctx:
+            raise ValueError(
+                f"usable_budget ({self.usable_budget}) cannot exceed num_ctx ({self.num_ctx})"
+            )
+        return self
 
 
 class ModelsFileConfig(BaseModel):

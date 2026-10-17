@@ -6,6 +6,7 @@ import {
   type ModelMetadata,
   type TokenUsage,
   type ApprovalRequestPayload,
+  type ContextStatusPayload,
 } from "../lib/agentSocket";
 import "./ChatPanel.css";
 
@@ -106,6 +107,7 @@ export default function ChatPanel({
   const [ollamaAvailable, setOllamaAvailable] = useState<boolean>(true);
   const [autonomyLevel, setAutonomyLevel] = useState<number>(2);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequestPayload | null>(null);
+  const [contextStatus, setContextStatus] = useState<ContextStatusPayload | null>(null);
 
   const setWorkspaceRoot = useCallback((ws: string) => {
     setWorkspaceRootState(ws);
@@ -321,6 +323,18 @@ export default function ChatPanel({
     const unsubDone = socket.onDone((payload) => {
       if (payload.session_id !== sessionIdRef.current) return;
 
+      if (payload.usage && payload.usage.num_ctx && payload.usage.usable_budget) {
+        setContextStatus({
+          session_id: payload.session_id,
+          prompt_tokens: payload.usage.prompt,
+          num_ctx: payload.usage.num_ctx,
+          usable_budget: payload.usage.usable_budget,
+          usage_percent: payload.usage.usage_percent ?? 0,
+          truncated: payload.usage.truncated,
+          warning: payload.usage.warning,
+        });
+      }
+
       setPendingApproval(null);
       setMessages((prev) => {
         const last = prev[prev.length - 1];
@@ -383,6 +397,12 @@ export default function ChatPanel({
       setAutonomyLevel(payload.autonomy_level);
     });
 
+    // Handle context budget & truncation status events from server
+    const unsubContextStatus = socket.onContextStatus((payload) => {
+      if (payload.session_id !== sessionIdRef.current) return;
+      setContextStatus(payload);
+    });
+
     // Initiate connection
     socket.connect();
 
@@ -398,6 +418,7 @@ export default function ChatPanel({
       unsubError();
       unsubApproval();
       unsubAutonomy();
+      unsubContextStatus();
       socket.disconnect();
       socketRef.current = null;
     };
@@ -562,6 +583,31 @@ export default function ChatPanel({
           <span className={`chat-panel__autonomy-badge chat-panel__autonomy-badge--l${autonomyLevel}`}>
             {autonomyLevel === 2 ? "Ask (L2)" : "Scoped (L3)"}
           </span>
+          {contextStatus && (
+            <span
+              className={`chat-panel__context-badge ${
+                contextStatus.truncated
+                  ? "chat-panel__context-badge--truncated"
+                  : contextStatus.usage_percent >= 60
+                  ? "chat-panel__context-badge--warning"
+                  : contextStatus.usage_percent >= 40
+                  ? "chat-panel__context-badge--notice"
+                  : "chat-panel__context-badge--normal"
+              }`}
+              title={
+                contextStatus.warning ||
+                `Prompt: ${contextStatus.prompt_tokens} tokens / Budget: ${contextStatus.usable_budget} (num_ctx: ${contextStatus.num_ctx})`
+              }
+            >
+              {contextStatus.truncated
+                ? `TRUNCATED (${contextStatus.usage_percent}%)`
+                : contextStatus.usage_percent >= 60
+                ? `${contextStatus.usage_percent}% (warning)`
+                : contextStatus.usage_percent >= 40
+                ? `${contextStatus.usage_percent}% (consider compacting)`
+                : `${contextStatus.usage_percent}%`}
+            </span>
+          )}
           {renderStatus()}
         </div>
       </div>

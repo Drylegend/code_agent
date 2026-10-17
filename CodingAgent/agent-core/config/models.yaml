@@ -9,12 +9,14 @@ models:
     model: ollama/qwen2.5:3b
     api_base: http://127.0.0.1:11434
     context_window: 131072
-    usable_budget: 8192
+    num_ctx: 8192
+    usable_budget: 6144
 
   local-coder:
     alias: local-coder
     model: ollama/qwen2.5-coder:7b
     api_base: http://127.0.0.1:11434
     context_window: 32768
-    usable_budget: 16384
+    num_ctx: 16384
+    usable_budget: 12288
     tool_mode: text_json

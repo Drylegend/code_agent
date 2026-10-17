@@ -41,6 +41,7 @@ from .protocol import (
     create_approval_request,
     create_changes_list_result,
     create_changes_undo_result,
+    create_context_status,
     create_delta,
     create_done,
     create_edit_undo_result,
@@ -133,8 +134,19 @@ class ConnectionWrapper:
             await self.connection.send(data)
 
 
-def format_tool_result_for_model(result: GatewayInvocationResult) -> str:
-    """Format a ToolGateway invocation result as untrusted data for LLM consumption."""
+# Maximum characters for tool results fed back to the model (~1500 tokens).
+MAX_TOOL_RESULT_FOR_MODEL_CHARS = 6000
+
+
+def format_tool_result_for_model(
+    result: GatewayInvocationResult,
+    max_chars: int = MAX_TOOL_RESULT_FOR_MODEL_CHARS,
+) -> str:
+    """Format a ToolGateway invocation result as untrusted data for LLM consumption.
+
+    Caps large outputs with a truncation marker and hint so the model's context
+    is not exhausted by massive listings or reads, while full results go to UI and audit log.
+    """
     if result.success:
         if isinstance(result.output, (dict, list)):
             body = json.dumps(result.output, indent=2)
@@ -151,6 +163,13 @@ def format_tool_result_for_model(result: GatewayInvocationResult) -> str:
         if result.denial_reason:
             err_dict["denial_reason"] = result.denial_reason
         body = json.dumps(err_dict, indent=2)
+
+    if len(body) > max_chars:
+        body = (
+            body[:max_chars]
+            + f"\n... [TOOL RESULT TRUNCATED: output exceeded token budget ({len(body)} chars). "
+            f"Hint: narrow your query, specify line ranges (start_line, end_line), or use targeted grep/glob.]"
+        )
 
     return (
         "<tool_result>\n"
@@ -581,6 +600,9 @@ async def run_chat_generation(
     )
     total_prompt_tokens = 0
     total_completion_tokens = 0
+    last_prompt_tokens = 0
+    last_context_truncated = False
+    last_context_warning: Optional[str] = None
     round_count = 0
     last_failed_tool_error: Optional[str] = None
     nudged_for_last_failure: bool = False
@@ -673,9 +695,93 @@ async def run_chat_generation(
             )
             check_task_cancelled()
 
+            prompt_eval_count: Optional[int] = None
+            eval_count: Optional[int] = None
             if hasattr(response, "usage") and response.usage:
-                total_prompt_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                total_completion_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                prompt_eval_count = getattr(response.usage, "prompt_tokens", None)
+                eval_count = getattr(response.usage, "completion_tokens", None)
+                if prompt_eval_count is not None:
+                    last_prompt_tokens = prompt_eval_count
+                total_prompt_tokens += (prompt_eval_count or 0)
+                total_completion_tokens += (eval_count or 0)
+
+            # Ground truth vs estimate context logging
+            logger.info(
+                "Context token ground truth for session_id=%s round=%d: "
+                "ground_truth_prompt=%s, ground_truth_completion=%s, estimated_prompt=%d "
+                "(system=%d, tool_schemas=%d, history=%d, tool_results=%d)",
+                session_id,
+                round_count,
+                prompt_eval_count,
+                eval_count,
+                total_prompt_est,
+                sys_tokens,
+                tool_schema_tokens,
+                hist_tokens,
+                tool_res_tokens,
+            )
+
+            # Truncation detection and context budget status calculation
+            effective_prompt = prompt_eval_count if prompt_eval_count is not None else total_prompt_est
+            num_ctx = model_config.num_ctx
+            usable_budget = model_config.usable_budget
+            usage_pct = (effective_prompt / usable_budget * 100.0) if usable_budget > 0 else 0.0
+
+            is_truncated = (
+                (prompt_eval_count is not None and prompt_eval_count >= num_ctx)
+                or (total_prompt_est >= num_ctx)
+            )
+            last_context_truncated = is_truncated
+            ctx_warning: Optional[str] = None
+
+            if is_truncated:
+                ctx_warning = f"Context TRUNCATED: prompt exceeded num_ctx ({num_ctx} tokens). Tools or history were cut."
+                logger.warning(
+                    "PROMPT TRUNCATION DETECTED for session_id=%s round=%d: prompt_tokens=%d >= num_ctx=%d",
+                    session_id,
+                    round_count,
+                    effective_prompt,
+                    num_ctx,
+                )
+            elif effective_prompt >= int(num_ctx * 0.9):
+                ctx_warning = f"Prompt approaching limit: {effective_prompt}/{num_ctx} tokens ({round(effective_prompt / num_ctx * 100)}% of num_ctx)."
+                logger.warning(
+                    "Prompt approaching num_ctx for session_id=%s round=%d: %s",
+                    session_id,
+                    round_count,
+                    ctx_warning,
+                )
+            elif usage_pct >= 60.0:
+                ctx_warning = f"Context warning: {round(usage_pct)}% of usable budget ({effective_prompt}/{usable_budget})."
+                logger.warning(
+                    "Context warning (>=60%%) for session_id=%s round=%d: %s",
+                    session_id,
+                    round_count,
+                    ctx_warning,
+                )
+            elif usage_pct >= 40.0:
+                ctx_warning = f"Consider compacting: {round(usage_pct)}% of usable budget ({effective_prompt}/{usable_budget})."
+                logger.info(
+                    "Context notice (>=40%%) for session_id=%s round=%d: %s",
+                    session_id,
+                    round_count,
+                    ctx_warning,
+                )
+
+            last_context_warning = ctx_warning
+
+            # Emit typed context.status event to UI
+            ctx_status_event = create_context_status(
+                session_id=session_id,
+                prompt_tokens=effective_prompt,
+                num_ctx=num_ctx,
+                usable_budget=usable_budget,
+                usage_percent=usage_pct,
+                truncated=is_truncated,
+                warning=ctx_warning,
+                reply_to_id=request_id,
+            )
+            await conn_wrapper.send(ctx_status_event.model_dump_json())
 
             if not response.choices:
                 raise LLMServiceError(
@@ -808,12 +914,21 @@ async def run_chat_generation(
                 # Commit completed assistant response to history
                 session.add_assistant_message(final_content)
 
+                done_usage_pct = (
+                    round((last_prompt_tokens or total_prompt_tokens) / model_config.usable_budget * 100.0, 1)
+                    if model_config.usable_budget > 0 else 0.0
+                )
                 done_msg = create_done(
                     session_id=session_id,
                     usage=TokenUsage(
                         prompt=total_prompt_tokens,
                         completion=total_completion_tokens,
                         total=total_prompt_tokens + total_completion_tokens,
+                        num_ctx=model_config.num_ctx,
+                        usable_budget=model_config.usable_budget,
+                        usage_percent=done_usage_pct,
+                        truncated=last_context_truncated,
+                        warning=last_context_warning,
                     ),
                     reply_to_id=request_id,
                 )
@@ -843,12 +958,21 @@ async def run_chat_generation(
                 await conn_wrapper.send(delta_msg.model_dump_json())
                 session.add_assistant_message(limit_text)
 
+                done_usage_pct = (
+                    round((last_prompt_tokens or total_prompt_tokens) / model_config.usable_budget * 100.0, 1)
+                    if model_config.usable_budget > 0 else 0.0
+                )
                 done_msg = create_done(
                     session_id=session_id,
                     usage=TokenUsage(
                         prompt=total_prompt_tokens,
                         completion=total_completion_tokens,
                         total=total_prompt_tokens + total_completion_tokens,
+                        num_ctx=model_config.num_ctx,
+                        usable_budget=model_config.usable_budget,
+                        usage_percent=done_usage_pct,
+                        truncated=last_context_truncated,
+                        warning=last_context_warning,
                     ),
                     reply_to_id=request_id,
                 )
